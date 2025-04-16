@@ -1,4 +1,5 @@
 import Loader from "@/components/loader";
+import { RoomChat } from "@/components/room-chat";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { trpc } from "@/utils/trpc";
@@ -38,7 +39,11 @@ function RouteComponent() {
 
 	const { data: rooms, isLoading } = useQuery({
 		...trpc.getRooms.queryOptions(),
-		select: (data): Room[] => data,
+		select: (data): Room[] =>
+			data.map((room) => ({
+				...room,
+				createdAt: new Date(room.createdAt),
+			})),
 	});
 
 	const closeRoom = useMutation({
@@ -54,7 +59,7 @@ function RouteComponent() {
 		},
 	});
 
-	if (isLoading) {
+	if (isLoading || !session) {
 		return <Loader />;
 	}
 
@@ -64,65 +69,73 @@ function RouteComponent() {
 		return <div>Room not found</div>;
 	}
 
-	const isAdmin = session?.user.id === room.ownerId;
+	const isAdmin = session.user.id === room.ownerId;
 	const activeMembers = room.members.filter((m) => m.isActive);
 
 	return (
-		<div className="container mx-auto max-w-3xl px-4 py-2">
-			<div className="mb-4 flex items-center justify-between">
-				<h1 className="font-bold text-lg">Room {room.joinCode}</h1>
-				{isAdmin && room.isActive && (
-					<div className="flex gap-2">
-						<Button
-							variant="destructive"
-							size="sm"
-							onClick={() => {
-								if (
-									window.confirm(
-										"Are you sure you want to close this room? All players will be removed.",
-									)
-								) {
-									closeRoom.mutate(room.id);
-								}
-							}}
-							disabled={closeRoom.isPending}
-						>
-							{closeRoom.isPending ? "Closing..." : "Close Room"}
-						</Button>
-					</div>
-				)}
-			</div>
-			<div className="grid gap-4">
-				<div className="rounded-lg border p-4">
-					<h2 className="mb-2 font-medium">Room Info</h2>
-					<div className="text-muted-foreground text-sm">
-						<p>
-							Players: {activeMembers.length}/{room.maxPlayers}
-						</p>
-						<p>Starting Stack: {room.startingStack}</p>
-						<p>Status: {room.isActive ? "Open" : "Closed"}</p>
-					</div>
-				</div>
-				<div className="rounded-lg border p-4">
-					<h2 className="mb-2 font-medium">Players</h2>
-					<div className="grid gap-2">
-						{activeMembers.map((member) => (
-							<div
-								key={member.id}
-								className="flex items-center justify-between rounded bg-accent/50 p-2"
+		<div className="container mx-auto max-w-5xl px-4 py-2">
+			<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
+				<div className="space-y-4">
+					<div className="mb-4 flex items-center justify-between">
+						<h1 className="font-bold text-lg">Room {room.joinCode}</h1>
+						{isAdmin && room.isActive && (
+							<Button
+								variant="destructive"
+								size="sm"
+								onClick={() => {
+									if (
+										window.confirm(
+											"Are you sure you want to close this room? All players will be removed.",
+										)
+									) {
+										closeRoom.mutate(room.id);
+									}
+								}}
+								disabled={closeRoom.isPending}
 							>
-								<div className="flex items-center gap-2">
-									<span className="text-sm">Seat {member.seatNumber}</span>
-									<span className="font-medium text-sm">
-										{member.userId === room.ownerId ? "Admin " : ""}
-										{member.userId === session?.user.id ? "You" : "Player"}
-									</span>
+								{closeRoom.isPending ? "Closing..." : "Close Room"}
+							</Button>
+						)}
+					</div>
+
+					<div className="rounded-lg border p-4">
+						<h2 className="mb-2 font-medium">Room Info</h2>
+						<div className="text-muted-foreground text-sm">
+							<p>
+								Players: {activeMembers.length}/{room.maxPlayers}
+							</p>
+							<p>Starting Stack: {room.startingStack}</p>
+							<p>Status: {room.isActive ? "Open" : "Closed"}</p>
+						</div>
+					</div>
+
+					<div className="rounded-lg border p-4">
+						<h2 className="mb-2 font-medium">Players</h2>
+						<div className="grid gap-2">
+							{activeMembers.map((member) => (
+								<div
+									key={member.id}
+									className="flex items-center justify-between rounded bg-accent/50 p-2"
+								>
+									<div className="flex items-center gap-2">
+										<span className="text-sm">Seat {member.seatNumber}</span>
+										<span className="font-medium text-sm">
+											{member.userId === room.ownerId ? "Admin " : ""}
+											{member.userId === session.user.id ? "You" : "Player"}
+										</span>
+									</div>
+									<span className="text-sm">{member.currentStack}</span>
 								</div>
-								<span className="text-sm">{member.currentStack}</span>
-							</div>
-						))}
+							))}
+						</div>
 					</div>
 				</div>
+
+				<RoomChat
+					roomId={room.id}
+					userId={session.user.id}
+					username={session.user.username || "Anonymous"}
+				/>
 			</div>
 		</div>
 	);

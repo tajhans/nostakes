@@ -8,6 +8,7 @@ import { user } from "../db/schema/auth";
 import { room, roomMember } from "../db/schema/rooms";
 import { s3Client } from "../lib/s3";
 import { protectedProcedure, publicProcedure, router } from "../lib/trpc";
+import { cleanupRoomMessages } from "../lib/ws";
 
 const createRoomSchema = z.object({
 	players: z.number().min(2, "Minimum 2 players").max(8, "Maximum 8 players"),
@@ -78,6 +79,8 @@ export const appRouter = router({
 					message: "Only the room owner can close the room",
 				});
 			}
+
+			await cleanupRoomMessages(input.roomId);
 
 			await Promise.all([
 				db.delete(room).where(eq(room.id, input.roomId)),
