@@ -1,8 +1,7 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 interface ChatMessage {
 	id: string;
@@ -14,150 +13,112 @@ interface ChatMessage {
 	timestamp: number;
 }
 
-interface MessageHistory {
-	type: "history";
-	messages: ChatMessage[];
-}
-
-type WebSocketMessage = ChatMessage | MessageHistory;
-
 interface RoomChatProps {
-	roomId: string;
-	userId: string;
-	username: string;
+	messages: ChatMessage[];
+	sendMessage: (message: string) => void;
+	isConnected: boolean;
+	currentUserId: string;
 }
 
 interface GroupedMessage extends ChatMessage {
-	isConsecutive?: boolean;
+	isConsecutive: boolean;
+	isCurrentUser: boolean;
 }
 
-export function RoomChat({ roomId, userId, username }: RoomChatProps) {
-	const [messages, setMessages] = useState<ChatMessage[]>([]);
+const MAX_MESSAGE_LENGTH = 32;
+
+export function RoomChat({
+	messages,
+	sendMessage: sendChatMessageProp,
+	isConnected,
+	currentUserId,
+}: RoomChatProps) {
 	const [messageInput, setMessageInput] = useState("");
-	const [isConnected, setIsConnected] = useState(false);
-	const wsRef = useRef<WebSocket | null>(null);
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-	useEffect(() => {
-		const ws = new WebSocket(
-			`ws://100.119.141.108:3002?roomId=${roomId}&userId=${userId}&username=${username}`,
-		);
+	const handleSend = () => {
+		const trimmedMessage = messageInput.trim();
+		if (!trimmedMessage) return;
 
-		ws.onopen = () => {
-			setIsConnected(true);
-		};
-
-		ws.onmessage = (event) => {
-			try {
-				const data: WebSocketMessage = JSON.parse(event.data);
-				if (data.type === "chat") {
-					setMessages((prev) =>
-						[...prev, data].sort((a, b) => a.timestamp - b.timestamp),
-					);
-				} else if (data.type === "history") {
-					setMessages(data.messages.sort((a, b) => a.timestamp - b.timestamp));
-				}
-			} catch (error) {
-				console.error("Failed to parse WebSocket message:", error);
-			}
-		};
-
-		ws.onclose = () => {
-			setIsConnected(false);
-		};
-
-		wsRef.current = ws;
-
-		return () => {
-			ws.close();
-		};
-	}, [roomId, userId, username]);
-
-	const sendMessage = () => {
-		if (!messageInput.trim() || !wsRef.current) return;
-
-		const message = {
-			roomId,
-			userId,
-			username,
-			message: messageInput.trim(),
-		};
-
-		wsRef.current.send(JSON.stringify({ type: "chat", ...message }));
+		sendChatMessageProp(trimmedMessage.substring(0, MAX_MESSAGE_LENGTH));
 		setMessageInput("");
 	};
 
 	const groupedMessages: GroupedMessage[] = messages.map(
 		(msg, index, array) => {
 			const prevMessage = array[index - 1];
-			const isConsecutive = prevMessage && prevMessage.userId === msg.userId;
+			const isConsecutive =
+				prevMessage &&
+				prevMessage.userId === msg.userId &&
+				msg.timestamp - prevMessage.timestamp < 5 * 60 * 1000;
+			const isCurrentUser = msg.userId === currentUserId;
 			return {
 				...msg,
 				isConsecutive,
+				isCurrentUser,
 			};
 		},
 	);
 
 	return (
-		<Card className="flex h-[500px] flex-col">
-			<CardHeader>
-				<CardTitle className="text-lg">Room Chat</CardTitle>
-			</CardHeader>
-			<CardContent className="flex flex-1 flex-col gap-4">
-				<ScrollArea
-					ref={scrollAreaRef}
-					className="h-[250px] flex-1 pr-4"
-					type="always"
-				>
-					<div className="space-y-1">
-						{groupedMessages.map((msg, index) => (
-							<div
-								key={msg.id}
-								className={`flex flex-col ${
-									msg.userId === userId ? "items-end" : "items-start"
-								} ${msg.isConsecutive ? "mt-1" : "mt-4"}`}
-							>
-								{!msg.isConsecutive && (
-									<span className="mb-1 text-muted-foreground text-xs">
-										{msg.username}
-									</span>
-								)}
-								<div
-									className={`max-w-[80%] rounded-lg p-2 ${
-										msg.userId === userId
-											? "bg-primary text-primary-foreground"
-											: "bg-muted"
-									}`}
+		<div className="flex h-full flex-col rounded-lg border p-4">
+			<h2 className="mb-2 font-medium">Chat</h2>
+			<ScrollArea ref={scrollAreaRef} className="flex-grow" type="always">
+				<div className="space-y-1 pr-4 pb-4">
+					{" "}
+					{/* Added pr-4 for scrollbar */}
+					{groupedMessages.map((msg) => (
+						<div
+							key={msg.id}
+							className={`flex flex-col ${
+								msg.isCurrentUser ? "items-end" : "items-start"
+							} ${msg.isConsecutive ? "mt-1" : "mt-3"}`}
+						>
+							{!msg.isConsecutive && (
+								<span
+									className={`mb-1 text-muted-foreground text-xs ${msg.isCurrentUser ? "mr-2 text-right" : "ml-2 text-left"}`}
 								>
-									<p className="text-sm">{msg.message}</p>
-								</div>
+									{msg.username}
+									{msg.isCurrentUser ? " (You)" : ""}
+								</span>
+							)}
+							<div
+								className={`max-w-[80%] rounded-lg px-3 py-2 ${
+									msg.isCurrentUser
+										? "bg-primary text-primary-foreground"
+										: "bg-muted"
+								}`}
+							>
+								<p className="break-words text-sm">{msg.message}</p>{" "}
 							</div>
-						))}
-					</div>
-				</ScrollArea>
-				<div className="flex gap-2">
-					<Input
-						value={messageInput}
-						onChange={(e) => setMessageInput(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && !e.shiftKey) {
-								e.preventDefault();
-								sendMessage();
-							}
-						}}
-						placeholder={
-							isConnected ? "Type a message..." : "Connecting to chat..."
-						}
-						disabled={!isConnected}
-					/>
-					<Button
-						onClick={sendMessage}
-						disabled={!isConnected || !messageInput.trim()}
-					>
-						Send
-					</Button>
+						</div>
+					))}
 				</div>
-			</CardContent>
-		</Card>
+			</ScrollArea>
+			<div className="mt-4 flex gap-2 pt-4">
+				<Input
+					value={messageInput}
+					onChange={(e) => setMessageInput(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && !e.shiftKey) {
+							e.preventDefault();
+							handleSend();
+						}
+					}}
+					placeholder={
+						isConnected ? "Type a message..." : "Connecting to chat..."
+					}
+					disabled={!isConnected}
+					maxLength={MAX_MESSAGE_LENGTH}
+					className="flex-1"
+				/>
+				<Button
+					onClick={handleSend}
+					disabled={!isConnected || !messageInput.trim()}
+				>
+					Send
+				</Button>
+			</div>
+		</div>
 	);
 }

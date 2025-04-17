@@ -1,6 +1,13 @@
 import { nanoid } from "nanoid";
 import { WebSocket } from "ws";
-import { redis } from "./redis";
+import {
+	getAllRoomMembers,
+	getRecentMessages,
+	redis,
+	storeMessage,
+	updateRoomMemberActiveStatus,
+} from "./redis";
+import type { RoomMemberInfo } from "./redis";
 
 interface ChatMessage {
 	type: "chat";
@@ -12,36 +19,81 @@ interface ChatMessage {
 	timestamp: number;
 }
 
-type WebSocketMessage = ChatMessage;
+interface MessageHistory {
+	type: "history";
+	messages: ChatMessage[];
+}
 
-const rooms = new Map<string, Set<WebSocket>>();
+interface RoomStateUpdate {
+	type: "room_state";
+	members: RoomMemberInfo[];
+}
 
-const ROOM_MESSAGES_EXPIRY = 60 * 60 * 24;
+interface RoomClosed {
+	type: "room_closed";
+}
 
-async function getRecentMessages(roomId: string): Promise<ChatMessage[]> {
-	try {
-		const messages = (await redis.lrange(
-			`room:${roomId}:messages`,
-			0,
-			-1,
-		)) as unknown as ChatMessage[];
+type ServerWebSocketMessage =
+	| ChatMessage
+	| MessageHistory
+	| RoomStateUpdate
+	| RoomClosed;
 
-		return messages;
-	} catch (error) {
-		console.error("Failed to get recent messages:", error);
-		return [];
+interface ClientChatMessage {
+	type: "chat";
+	message: string;
+}
+
+type ClientWebSocketMessage = ClientChatMessage;
+
+const rooms = new Map<string, Map<string, WebSocket>>();
+const MAX_MESSAGE_LENGTH = 32;
+
+function broadcast(
+	roomId: string,
+	message: ServerWebSocketMessage,
+	senderId?: string,
+) {
+	const roomConnections = rooms.get(roomId);
+	if (!roomConnections) return;
+
+	const messageString = JSON.stringify(message);
+
+	for (const [userId, client] of roomConnections) {
+		if (client.readyState === WebSocket.OPEN) {
+			client.send(messageString);
+		} else {
+			console.warn(
+				`Removing stale WebSocket connection for user ${userId} in room ${roomId}`,
+			);
+			roomConnections.delete(userId);
+			if (roomConnections.size === 0) {
+				rooms.delete(roomId);
+			}
+			updateRoomMemberActiveStatus(roomId, userId, false).catch(console.error);
+			broadcastRoomState(roomId).catch(console.error);
+		}
 	}
 }
 
-async function storeMessage(message: ChatMessage): Promise<void> {
+export async function broadcastRoomState(roomId: string) {
 	try {
-		const messageString = JSON.stringify(message);
-
-		await redis.lpush(`room:${message.roomId}:messages`, messageString);
-		await redis.ltrim(`room:${message.roomId}:messages`, 0, 99);
-		await redis.expire(`room:${message.roomId}:messages`, ROOM_MESSAGES_EXPIRY);
+		const members = await getAllRoomMembers(roomId);
+		const activeMembers = members.filter((m) => m.isActive);
+		broadcast(roomId, { type: "room_state", members });
 	} catch (error) {
-		console.error("Failed to store message:", error);
+		console.error(`Failed to broadcast room state for room ${roomId}:`, error);
+	}
+}
+
+export function broadcastRoomClosed(roomId: string) {
+	broadcast(roomId, { type: "room_closed" });
+	const roomConnections = rooms.get(roomId);
+	if (roomConnections) {
+		for (const [, ws] of roomConnections) {
+			ws.close(1000, "Room closed by owner");
+		}
+		rooms.delete(roomId);
 	}
 }
 
@@ -51,59 +103,122 @@ export async function handleWebSocket(
 	userId: string,
 	username: string,
 ) {
-	if (!rooms.has(roomId)) {
-		rooms.set(roomId, new Set());
+	let roomConnections = rooms.get(roomId);
+	if (!roomConnections) {
+		roomConnections = new Map<string, WebSocket>();
+		rooms.set(roomId, roomConnections);
 	}
 
-	const room = rooms.get(roomId);
+	if (roomConnections.has(userId)) {
+		console.warn(
+			`User ${userId} already connected to room ${roomId}. Closing previous connection.`,
+		);
+		roomConnections.get(userId)?.close(1011, "New connection established");
+	}
 
-	if (!room) {
+	roomConnections.set(userId, ws);
+	console.log(
+		`User ${userId} (${username}) connected to room ${roomId}. Total users: ${roomConnections.size}`,
+	);
+
+	await updateRoomMemberActiveStatus(roomId, userId, true);
+
+	try {
+		const recentMessages = await getRecentMessages(roomId);
+		if (recentMessages.length > 0) {
+			ws.send(
+				JSON.stringify({
+					type: "history",
+					messages: recentMessages,
+				}),
+			);
+		}
+	} catch (error) {
 		console.error(
-			`Room ${roomId} unexpectedly not found after creation attempt.`,
-		);
-		throw new Error(`Room ${roomId} unexpectedly not found`);
-	}
-
-	room.add(ws);
-
-	const recentMessages = await getRecentMessages(roomId);
-	if (recentMessages.length > 0) {
-		ws.send(
-			JSON.stringify({
-				type: "history",
-				messages: recentMessages,
-			}),
+			`Failed to send message history to ${userId} in room ${roomId}:`,
+			error,
 		);
 	}
+
+	try {
+		const members = await getAllRoomMembers(roomId);
+		ws.send(JSON.stringify({ type: "room_state", members }));
+	} catch (error) {
+		console.error(
+			`Failed to send initial room state to ${userId} in room ${roomId}:`,
+			error,
+		);
+	}
+
+	await broadcastRoomState(roomId);
 
 	ws.on("message", async (data) => {
 		try {
-			const payload = JSON.parse(data.toString());
+			const payload: ClientWebSocketMessage = JSON.parse(data.toString());
+
 			if (payload.type === "chat") {
+				let messageContent = payload.message.trim();
+				if (messageContent.length > MAX_MESSAGE_LENGTH) {
+					messageContent = messageContent.substring(0, MAX_MESSAGE_LENGTH);
+				}
+
+				if (!messageContent) {
+					return;
+				}
+
 				const message: ChatMessage = {
-					...payload,
+					type: "chat",
 					id: nanoid(),
+					roomId,
+					userId,
+					username,
+					message: messageContent,
 					timestamp: Date.now(),
 				};
 
 				await storeMessage(message);
-
-				// Replaced forEach with for...of loop
-				for (const client of room) {
-					if (client.readyState === WebSocket.OPEN) {
-						client.send(JSON.stringify(message));
-					}
-				}
+				broadcast(roomId, message);
 			}
 		} catch (error) {
-			console.error("Failed to handle WebSocket message:", error);
+			console.error(
+				`Failed to handle WebSocket message from ${userId} in room ${roomId}:`,
+				error,
+			);
 		}
 	});
 
-	ws.on("close", () => {
-		room.delete(ws);
-		if (room.size === 0) {
+	ws.on("close", async (code, reason) => {
+		console.log(
+			`User ${userId} disconnected from room ${roomId}. Code: ${code}, Reason: ${reason?.toString()}`,
+		);
+		roomConnections.delete(userId);
+
+		await updateRoomMemberActiveStatus(roomId, userId, false);
+
+		await broadcastRoomState(roomId);
+
+		if (roomConnections.size === 0) {
+			console.log(
+				`Room ${roomId} is now empty. Removing from active rooms map.`,
+			);
 			rooms.delete(roomId);
+		}
+	});
+
+	ws.on("error", (error) => {
+		console.error(
+			`WebSocket error for user ${userId} in room ${roomId}:`,
+			error,
+		);
+		if (roomConnections.has(userId)) {
+			roomConnections.delete(userId);
+			updateRoomMemberActiveStatus(roomId, userId, false)
+				.then(() => broadcastRoomState(roomId))
+				.catch(console.error);
+
+			if (roomConnections.size === 0) {
+				rooms.delete(roomId);
+			}
 		}
 	});
 }

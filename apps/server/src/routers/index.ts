@@ -6,9 +6,16 @@ import { z } from "zod";
 import { db } from "../db";
 import { user } from "../db/schema/auth";
 import { room, roomMember } from "../db/schema/rooms";
+import {
+	cleanupRoomMessages,
+	deleteRoomMembers,
+	setRoomMember,
+	updateRoomMemberActiveStatus,
+} from "../lib/redis";
+import type { RoomMemberInfo } from "../lib/redis";
 import { s3Client } from "../lib/s3";
 import { protectedProcedure, publicProcedure, router } from "../lib/trpc";
-import { cleanupRoomMessages } from "../lib/ws";
+import { broadcastRoomClosed, broadcastRoomState } from "../lib/ws";
 
 const createRoomSchema = z.object({
 	players: z.number().min(2, "Minimum 2 players").max(8, "Maximum 8 players"),
@@ -20,6 +27,10 @@ const joinRoomSchema = z.object({
 });
 
 const closeRoomSchema = z.object({
+	roomId: z.string().min(1, "Room ID is required"),
+});
+
+const leaveRoomSchema = z.object({
 	roomId: z.string().min(1, "Room ID is required"),
 });
 
@@ -47,12 +58,25 @@ export const appRouter = router({
 				})
 				.returning();
 
-			await db.insert(roomMember).values({
-				roomId: newRoom.id,
+			const [newMember] = await db
+				.insert(roomMember)
+				.values({
+					roomId: newRoom.id,
+					userId: ctx.session.user.id,
+					currentStack: input.startingStack,
+					seatNumber: 1,
+					isActive: true,
+				})
+				.returning();
+
+			const ownerInfo: RoomMemberInfo = {
 				userId: ctx.session.user.id,
-				currentStack: input.startingStack,
-				seatNumber: 1,
-			});
+				username: ctx.session.user.username || "Unknown",
+				seatNumber: newMember.seatNumber,
+				currentStack: newMember.currentStack,
+				isActive: newMember.isActive,
+			};
+			await setRoomMember(newRoom.id, ownerInfo);
 
 			return newRoom;
 		}),
@@ -61,7 +85,7 @@ export const appRouter = router({
 		.input(closeRoomSchema)
 		.mutation(async ({ input, ctx }) => {
 			const [targetRoom] = await db
-				.select()
+				.select({ ownerId: room.ownerId })
 				.from(room)
 				.where(eq(room.id, input.roomId))
 				.limit(1);
@@ -80,12 +104,12 @@ export const appRouter = router({
 				});
 			}
 
-			await cleanupRoomMessages(input.roomId);
+			broadcastRoomClosed(input.roomId);
 
-			await Promise.all([
-				db.delete(room).where(eq(room.id, input.roomId)),
-				db.delete(roomMember).where(eq(roomMember.roomId, input.roomId)),
-			]);
+			await cleanupRoomMessages(input.roomId);
+			await deleteRoomMembers(input.roomId);
+			await db.delete(roomMember).where(eq(roomMember.roomId, input.roomId));
+			await db.delete(room).where(eq(room.id, input.roomId));
 
 			return { success: true };
 		}),
@@ -113,80 +137,153 @@ export const appRouter = router({
 				});
 			}
 
+			const userId = ctx.session.user.id;
+			const username = ctx.session.user.username || "Unknown";
+
 			const [existingMember] = await db
 				.select()
 				.from(roomMember)
 				.where(
 					and(
 						eq(roomMember.roomId, targetRoom.id),
-						eq(roomMember.userId, ctx.session.user.id),
+						eq(roomMember.userId, userId),
 					),
 				)
 				.limit(1);
 
+			let memberInfo: RoomMemberInfo;
+
 			if (existingMember) {
 				if (existingMember.isActive) {
+					memberInfo = {
+						userId: existingMember.userId,
+						username: username,
+						seatNumber: existingMember.seatNumber,
+						currentStack: existingMember.currentStack,
+						isActive: true,
+					};
+					await db
+						.update(roomMember)
+						.set({ isActive: true })
+						.where(eq(roomMember.id, existingMember.id));
+				} else {
+					await db
+						.update(roomMember)
+						.set({ isActive: true })
+						.where(eq(roomMember.id, existingMember.id));
+
+					memberInfo = {
+						userId: existingMember.userId,
+						username: username,
+						seatNumber: existingMember.seatNumber,
+						currentStack: existingMember.currentStack,
+						isActive: true,
+					};
+				}
+			} else {
+				const [{ count }] = await db
+					.select({
+						count: sql<number>`count(*)::int`,
+					})
+					.from(roomMember)
+					.where(
+						and(
+							eq(roomMember.roomId, targetRoom.id),
+							eq(roomMember.isActive, true),
+						),
+					);
+
+				if (count >= targetRoom.maxPlayers) {
 					throw new TRPCError({
 						code: "BAD_REQUEST",
-						message: "You are already in this room",
+						message: "Room is full",
 					});
 				}
 
-				await db
-					.update(roomMember)
-					.set({ isActive: true })
-					.where(eq(roomMember.id, existingMember.id));
+				const takenSeats = await db
+					.select({ seatNumber: roomMember.seatNumber })
+					.from(roomMember)
+					.where(
+						and(
+							eq(roomMember.roomId, targetRoom.id),
+							eq(roomMember.isActive, true),
+						),
+					);
 
-				return targetRoom;
-			}
-
-			const [{ count }] = await db
-				.select({
-					count: sql<number>`count(*)::int`,
-				})
-				.from(roomMember)
-				.where(
-					and(
-						eq(roomMember.roomId, targetRoom.id),
-						eq(roomMember.isActive, true),
-					),
+				const occupiedSeats = new Set(
+					takenSeats.map((seat) => seat.seatNumber),
 				);
+				let nextSeat = 1;
+				while (
+					occupiedSeats.has(nextSeat) &&
+					nextSeat <= targetRoom.maxPlayers
+				) {
+					nextSeat++;
+				}
 
-			if (count >= targetRoom.maxPlayers) {
-				throw new TRPCError({
-					code: "BAD_REQUEST",
-					message: "Room is full",
-				});
+				if (nextSeat > targetRoom.maxPlayers) {
+					throw new TRPCError({
+						code: "INTERNAL_SERVER_ERROR",
+						message: "Could not assign seat, room might be unexpectedly full.",
+					});
+				}
+
+				const [newMember] = await db
+					.insert(roomMember)
+					.values({
+						roomId: targetRoom.id,
+						userId: userId,
+						currentStack: targetRoom.startingStack,
+						seatNumber: nextSeat,
+						isActive: true,
+					})
+					.returning();
+
+				memberInfo = {
+					userId: newMember.userId,
+					username: username,
+					seatNumber: newMember.seatNumber,
+					currentStack: newMember.currentStack,
+					isActive: newMember.isActive,
+				};
 			}
 
-			const takenSeats = await db
-				.select({ seatNumber: roomMember.seatNumber })
-				.from(roomMember)
-				.where(
-					and(
-						eq(roomMember.roomId, targetRoom.id),
-						eq(roomMember.isActive, true),
-					),
-				);
-
-			const occupiedSeats = new Set(takenSeats.map((seat) => seat.seatNumber));
-			let nextSeat = 1;
-			while (occupiedSeats.has(nextSeat)) {
-				nextSeat++;
-			}
-
-			await db.insert(roomMember).values({
-				roomId: targetRoom.id,
-				userId: ctx.session.user.id,
-				currentStack: targetRoom.startingStack,
-				seatNumber: nextSeat,
-			});
+			await setRoomMember(targetRoom.id, memberInfo);
+			await broadcastRoomState(targetRoom.id);
 
 			return targetRoom;
 		}),
 
-	getRooms: protectedProcedure.query(async () => {
-		const rooms = await db
+	leaveRoom: protectedProcedure
+		.input(leaveRoomSchema)
+		.mutation(async ({ input, ctx }) => {
+			const userId = ctx.session.user.id;
+			const roomId = input.roomId;
+
+			const [updatedMember] = await db
+				.update(roomMember)
+				.set({ isActive: false })
+				.where(
+					and(eq(roomMember.roomId, roomId), eq(roomMember.userId, userId)),
+				)
+				.returning({ id: roomMember.id });
+
+			if (!updatedMember) {
+				console.warn(
+					`User ${userId} tried to leave room ${roomId} but was not found or already inactive.`,
+				);
+
+				return { success: true };
+			}
+
+			await updateRoomMemberActiveStatus(roomId, userId, false);
+			await broadcastRoomState(roomId);
+
+			return { success: true };
+		}),
+
+	getRooms: protectedProcedure.query(async ({ ctx }) => {
+		const roomsData = await db
 			.select({
 				id: room.id,
 				joinCode: room.joinCode,
@@ -195,10 +292,18 @@ export const appRouter = router({
 				isActive: room.isActive,
 				createdAt: room.createdAt,
 				ownerId: room.ownerId,
-				members: roomMember,
+				memberId: roomMember.id,
+				memberUserId: roomMember.userId,
+				memberJoinedAt: roomMember.joinedAt,
+				memberCurrentStack: roomMember.currentStack,
+				memberIsActive: roomMember.isActive,
+				memberSeatNumber: roomMember.seatNumber,
+				memberUsername: user.username,
+				memberImage: user.image,
 			})
 			.from(room)
 			.leftJoin(roomMember, eq(roomMember.roomId, room.id))
+			.leftJoin(user, eq(roomMember.userId, user.id))
 			.orderBy(desc(room.createdAt));
 
 		interface GroupedRoom {
@@ -209,13 +314,23 @@ export const appRouter = router({
 			isActive: boolean;
 			createdAt: Date;
 			ownerId: string;
-			members: (typeof roomMember.$inferSelect)[];
+			members: Array<{
+				id: string;
+				userId: string;
+				username: string | null;
+				image: string | null;
+				joinedAt: Date;
+				currentStack: number;
+				isActive: boolean;
+				seatNumber: number;
+			}>;
 		}
 
-		const groupedRooms = rooms.reduce<Record<string, GroupedRoom>>(
+		const groupedRooms = roomsData.reduce<Record<string, GroupedRoom>>(
 			(acc, row) => {
-				if (!acc[row.id]) {
-					acc[row.id] = {
+				const roomId = row.id;
+				if (!acc[roomId]) {
+					acc[roomId] = {
 						id: row.id,
 						joinCode: row.joinCode,
 						maxPlayers: row.maxPlayers,
@@ -226,15 +341,30 @@ export const appRouter = router({
 						members: [],
 					};
 				}
-				if (row.members) {
-					acc[row.id].members.push(row.members);
+				if (row.memberId && row.memberUserId) {
+					acc[roomId].members.push({
+						id: row.memberId,
+						userId: row.memberUserId,
+						username: row.memberUsername,
+						image: row.memberImage,
+						joinedAt: row.memberJoinedAt ?? new Date(),
+						currentStack: row.memberCurrentStack ?? 0,
+						isActive: row.memberIsActive ?? false,
+						seatNumber: row.memberSeatNumber ?? 0,
+					});
 				}
 				return acc;
 			},
 			{},
 		);
 
-		return Object.values(groupedRooms);
+		const userRooms = Object.values(groupedRooms).filter(
+			(r) =>
+				r.ownerId === ctx.session.user.id ||
+				r.members.some((m) => m.userId === ctx.session.user.id && m.isActive),
+		);
+
+		return userRooms;
 	}),
 
 	updateProfile: protectedProcedure
@@ -267,6 +397,7 @@ export const appRouter = router({
 				}
 			}
 
+			let imageUrl: string | null = null;
 			if (input.image) {
 				const buffer = Buffer.from(
 					input.image.replace(/^data:image\/\w+;base64,/, ""),
@@ -284,19 +415,18 @@ export const appRouter = router({
 					}),
 				);
 
-				const imageUrl = `https://image.nostakes.poker/nostakes/${key}`;
-				await db
-					.update(user)
-					.set({
-						image: imageUrl,
-						updatedAt: new Date(),
-					})
-					.where(eq(user.id, ctx.session.user.id));
-
-				return { imageUrl };
+				imageUrl = `https://image.nostakes.poker/nostakes/${key}`;
 			}
 
-			return { imageUrl: null };
+			await db
+				.update(user)
+				.set({
+					image: imageUrl,
+					updatedAt: new Date(),
+				})
+				.where(eq(user.id, ctx.session.user.id));
+
+			return { imageUrl };
 		}),
 });
 
