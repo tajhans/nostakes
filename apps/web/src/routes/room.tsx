@@ -172,7 +172,7 @@ function RouteComponent() {
 
 	const { data: initialRoomData, isLoading: isRoomLoading } = useQuery({
 		...trpc.getRooms.queryOptions(),
-		enabled: !!session,
+		enabled: !!session && !!roomId,
 		select: (data): RoomData | undefined => data.find((r) => r.id === roomId),
 		staleTime: 5 * 60 * 1000,
 		gcTime: 10 * 60 * 1000,
@@ -231,35 +231,47 @@ function RouteComponent() {
 	});
 
 	useEffect(() => {
-		if (isSessionPending || isRoomLoading || !session?.user || !roomId) {
-			return;
-		}
-		if (!isRoomLoading && !initialRoomData) {
-			toast.error("Room not found or access denied.");
-			navigate({ to: "/" });
-			return;
-		}
-
-		if (!initialRoomData) {
+		if (!session?.user || !roomId || !initialRoomData) {
+			console.log(
+				"WebSocket Effect: Prerequisites not met (session, roomId, or initialRoomData missing).",
+			);
+			if (wsRef.current) {
+				console.log(
+					"WebSocket Effect: Closing existing connection due to unmet prerequisites.",
+				);
+				wsRef.current.close(1000, "Prerequisites not met");
+				wsRef.current = null;
+				setIsConnected(false);
+			}
 			return;
 		}
 
 		if (wsRef.current) {
-			wsRef.current.close();
+			console.log(
+				"WebSocket Effect: Closing previous connection before creating new one.",
+			);
+			wsRef.current.close(1000, "Reconnecting or dependencies changed");
+			wsRef.current = null;
 		}
 
 		const serverUrl = new URL(import.meta.env.VITE_SERVER_URL);
 		const wsProtocol = serverUrl.protocol === "https:" ? "wss" : "ws";
 		const wsUrl = `${wsProtocol}://${serverUrl.hostname}:3002?roomId=${roomId}&userId=${session.user.id}&username=${encodeURIComponent(session.user.username || "Anonymous")}`;
+
+		console.log("WebSocket Effect: Attempting to connect to", wsUrl);
 		const ws = new WebSocket(wsUrl);
 		wsRef.current = ws;
 
-		ws.onopen = () => {
+		const handleOpen = () => {
 			console.log("WebSocket connected");
-			setIsConnected(true);
+			if (wsRef.current === ws) {
+				setIsConnected(true);
+			}
 		};
 
-		ws.onmessage = (event) => {
+		const handleMessage = (event: MessageEvent) => {
+			if (wsRef.current !== ws) return;
+
 			try {
 				const data: ServerWebSocketMessage = JSON.parse(event.data);
 				console.log("WS Message Received:", data);
@@ -315,7 +327,6 @@ function RouteComponent() {
 					}
 					case "room_closed":
 						toast.info("The room has been closed by the owner.");
-						ws.close(1000, "Room closed by owner");
 						navigate({ to: "/" });
 						break;
 					case "game_state":
@@ -331,55 +342,138 @@ function RouteComponent() {
 			}
 		};
 
-		ws.onclose = (event) => {
+		const handleClose = (event: CloseEvent) => {
 			console.log("WebSocket disconnected", event.code, event.reason);
-			setIsConnected(false);
-			if (event.code !== 1000 && event.code !== 1005) {
+			if (wsRef.current === ws) {
+				setIsConnected(false);
+				wsRef.current = null;
+
+				const expectedReasons = [
+					"Room closed by owner",
+					"Client navigating away",
+					"Reconnecting or dependencies changed",
+					"Prerequisites not met",
+				];
 				if (
-					event.reason !== "Room closed by owner" &&
-					event.reason !== "Client navigating away"
+					event.code !== 1000 &&
+					event.code !== 1001 &&
+					event.code !== 1005 &&
+					!expectedReasons.includes(event.reason)
 				) {
-					toast.error("Chat connection lost.");
+					toast.error(`Chat connection lost unexpectedly (${event.code}).`);
+				}
+			} else {
+				console.log(
+					"WebSocket closed, but ref points to a different instance or null.",
+				);
+			}
+		};
+
+		const handleError = (error: Event) => {
+			console.error("WebSocket error:", error);
+			if (wsRef.current === ws) {
+				toast.error("WebSocket connection error.");
+				if (ws.readyState < WebSocket.CLOSING) {
+					ws.close(1011, "WebSocket error occurred");
 				}
 			}
-			wsRef.current = null;
 		};
 
-		ws.onerror = (error) => {
-			console.error("WebSocket error:", error);
-			toast.error("WebSocket connection error.");
-			setIsConnected(false);
-			wsRef.current = null;
-		};
+		ws.onopen = handleOpen;
+		ws.onmessage = handleMessage;
+		ws.onclose = handleClose;
+		ws.onerror = handleError;
 
 		return () => {
-			if (wsRef.current) {
-				console.log("Closing WebSocket connection on component unmount");
-				wsRef.current.close(1000, "Client navigating away");
+			console.log("WebSocket Effect: Cleanup function running...");
+			if (ws && ws.readyState < WebSocket.CLOSING) {
+				console.log(
+					"WebSocket Effect: Closing connection via cleanup function.",
+				);
+				ws.close(1000, "Client navigating away");
+			}
+			if (wsRef.current === ws) {
+				console.log(
+					"WebSocket Effect: Clearing ref in cleanup as it matched closing ws.",
+				);
 				wsRef.current = null;
 			}
 		};
-	}, [
-		roomId,
-		session,
-		isSessionPending,
-		initialRoomData,
-		isRoomLoading,
-		navigate,
-		queryClient,
-	]);
+	}, [roomId, session, initialRoomData, navigate, queryClient]);
 
 	useEffect(() => {
 		if (initialRoomData?.members) {
-			setMembers(initialRoomData.members as RoomMemberInfo[]);
+			const processedInitialMembers = initialRoomData.members.map((member) => ({
+				...member,
+				joinedAt: member.joinedAt ? new Date(member.joinedAt) : undefined,
+			}));
+			setMembers(processedInitialMembers as RoomMemberInfo[]);
 		}
 	}, [initialRoomData]);
+
+	useEffect(() => {
+		const currentPlayerState = gameState?.playerStates[session?.user?.id ?? ""];
+		const isMyTurn =
+			!!currentPlayerState &&
+			gameState?.currentPlayerSeat === currentPlayerState?.seatNumber &&
+			!currentPlayerState?.isFolded &&
+			!currentPlayerState?.isAllIn &&
+			!currentPlayerState?.isSittingOut;
+
+		if (!isMyTurn || !gameState || !initialRoomData || !currentPlayerState) {
+			return;
+		}
+
+		const currentBet = gameState.currentBet;
+		const minRaiseAmount = gameState.minRaiseAmount;
+		const playerCurrentBet = currentPlayerState.currentBet;
+		const playerStack = currentPlayerState.stack;
+
+		const canBet = currentBet === 0 && playerStack > 0;
+		const canRaise =
+			currentBet > 0 && playerStack > currentBet - playerCurrentBet;
+
+		const minBet = Math.min(initialRoomData.bigBlind, playerStack);
+		const minRaiseTo = Math.min(
+			currentBet + minRaiseAmount,
+			playerStack + playerCurrentBet,
+		);
+		const maxBetOrRaise = playerStack + playerCurrentBet;
+
+		let adjustedBetAmount = betAmount;
+		let adjustmentNeeded = false;
+
+		if (canBet && betAmount > 0 && betAmount < minBet) {
+			if (betAmount !== playerStack) {
+				adjustedBetAmount = minBet;
+				adjustmentNeeded = true;
+			}
+		} else if (canRaise && betAmount > currentBet && betAmount < minRaiseTo) {
+			if (betAmount !== maxBetOrRaise) {
+				adjustedBetAmount = minRaiseTo;
+				adjustmentNeeded = true;
+			}
+		}
+
+		if ((canBet || canRaise) && betAmount > maxBetOrRaise) {
+			adjustedBetAmount = maxBetOrRaise;
+			adjustmentNeeded = true;
+		}
+
+		if (adjustmentNeeded) {
+			console.log(
+				`Adjusting bet amount from ${betAmount} to ${adjustedBetAmount}`,
+			);
+			setBetAmount(adjustedBetAmount);
+		}
+	}, [gameState, session?.user?.id, initialRoomData, betAmount]);
 
 	const sendMessage = (message: ClientChatMessage | ClientPokerAction) => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
 			console.log("Sending WS Message:", message);
 			wsRef.current.send(JSON.stringify(message));
 		} else {
+			console.warn("Attempted to send message, but WebSocket is not open.");
 			toast.error("Cannot send message. Connection not active.");
 		}
 	};
@@ -391,43 +485,41 @@ function RouteComponent() {
 	};
 
 	const handleCopyCode = async () => {
-		if (!room?.joinCode) return;
-		const codeToCopy = room.joinCode;
+		if (!initialRoomData?.joinCode) return;
+		const codeToCopy = initialRoomData.joinCode;
 
 		try {
-			if (navigator.clipboard?.writeText) {
-				await navigator.clipboard.writeText(codeToCopy);
-				setIsCopied(true);
-				toast.success("Room code copied to clipboard!");
-				setTimeout(() => setIsCopied(false), 2000);
-			} else {
-				const textArea = document.createElement("textarea");
-				textArea.value = codeToCopy;
-				textArea.style.position = "fixed";
-				textArea.style.top = "-9999px";
-				textArea.style.left = "-9999px";
-				document.body.appendChild(textArea);
-				textArea.focus();
-				textArea.select();
-				try {
-					const successful = document.execCommand("copy");
-					if (successful) {
-						setIsCopied(true);
-						toast.success("Room code copied to clipboard!");
-						setTimeout(() => setIsCopied(false), 2000);
-					} else {
-						throw new Error("Fallback copy command failed");
-					}
-				} catch (err) {
-					console.error("Fallback copy failed: ", err);
-					toast.error("Failed to copy room code using fallback.");
-				} finally {
-					document.body.removeChild(textArea);
-				}
-			}
+			await navigator.clipboard.writeText(codeToCopy);
+			setIsCopied(true);
+			toast.success("Room code copied to clipboard!");
+			setTimeout(() => setIsCopied(false), 2000);
 		} catch (err) {
-			console.error("Failed to copy room code: ", err);
-			toast.error("Failed to copy room code.");
+			console.error(
+				"Failed to copy room code using navigator.clipboard: ",
+				err,
+			);
+			const textArea = document.createElement("textarea");
+			textArea.value = codeToCopy;
+			textArea.style.position = "fixed";
+			textArea.style.opacity = "0";
+			document.body.appendChild(textArea);
+			textArea.focus();
+			textArea.select();
+			try {
+				const successful = document.execCommand("copy");
+				if (successful) {
+					setIsCopied(true);
+					toast.success("Room code copied to clipboard! (fallback)");
+					setTimeout(() => setIsCopied(false), 2000);
+				} else {
+					throw new Error("Fallback copy command failed");
+				}
+			} catch (fallbackErr) {
+				console.error("Fallback copy failed: ", fallbackErr);
+				toast.error("Failed to copy room code.");
+			} finally {
+				document.body.removeChild(textArea);
+			}
 		}
 	};
 
@@ -451,7 +543,7 @@ function RouteComponent() {
 		}
 	};
 
-	if (isSessionPending || isRoomLoading) {
+	if (isSessionPending || (roomId && isRoomLoading)) {
 		return <Loader />;
 	}
 
@@ -459,7 +551,7 @@ function RouteComponent() {
 		return <Loader />;
 	}
 
-	if (!isRoomLoading && !initialRoomData) {
+	if (roomId && !isRoomLoading && !initialRoomData) {
 		return (
 			<div className="container mx-auto px-4 py-8 text-center">
 				<h1 className="mb-4 font-bold text-xl">Room Not Found</h1>
@@ -474,9 +566,23 @@ function RouteComponent() {
 		);
 	}
 
-	const room = initialRoomData;
+	if (!initialRoomData) {
+		console.error("Error: initialRoomData is unexpectedly null/undefined.");
+		return (
+			<div className="container mx-auto px-4 py-8 text-center">
+				<h1 className="mb-4 font-bold text-destructive text-xl">
+					Error Loading Room Data
+				</h1>
+				<Button onClick={() => navigate({ to: "/" })} className="mt-4">
+					Go to Home
+				</Button>
+			</div>
+		);
+	}
+
+	const room = initialRoomData; // Use the confirmed data
 	const activeMembers = members.filter((m) => m.isActive);
-	const isAdmin = session.user.id === room?.ownerId;
+	const isAdmin = session.user.id === room.ownerId;
 	const currentPlayerState = gameState?.playerStates[session.user.id];
 	const isMyTurn =
 		!!currentPlayerState &&
@@ -490,14 +596,14 @@ function RouteComponent() {
 	);
 
 	const showPlayButton =
-		room?.isActive &&
+		room.isActive &&
 		(!gameState ||
 			gameState.phase === "waiting" ||
 			gameState.phase === "end_hand");
 
 	const wantsToPlay = currentUserMemberInfo?.wantsToPlayNextHand === true;
 	const playButtonText =
-		room?.ante && room.ante > 0
+		room.ante > 0
 			? wantsToPlay
 				? `Retract Ante (${room.ante})`
 				: `Post Ante (${room.ante})`
@@ -506,7 +612,7 @@ function RouteComponent() {
 				: "Enter Next Hand";
 
 	const currentBet = gameState?.currentBet ?? 0;
-	const minRaiseAmount = gameState?.minRaiseAmount ?? room?.bigBlind ?? 0;
+	const minRaiseAmount = gameState?.minRaiseAmount ?? room.bigBlind;
 	const playerCurrentBet = currentPlayerState?.currentBet ?? 0;
 	const playerStack = currentPlayerState?.stack ?? 0;
 
@@ -517,45 +623,12 @@ function RouteComponent() {
 		isMyTurn && currentBet > 0 && playerStack > currentBet - playerCurrentBet;
 
 	const callAmount = Math.min(currentBet - playerCurrentBet, playerStack);
-	const minBet = Math.min(room?.bigBlind ?? 1, playerStack);
+	const minBet = Math.max(1, Math.min(room.bigBlind, playerStack));
 	const minRaiseTo = Math.min(
 		currentBet + minRaiseAmount,
 		playerStack + playerCurrentBet,
 	);
 	const maxBetOrRaise = playerStack + playerCurrentBet;
-
-	useEffect(() => {
-		if (isMyTurn) {
-			if (
-				canBet &&
-				betAmount > 0 &&
-				betAmount < minBet &&
-				betAmount !== playerStack
-			) {
-				setBetAmount(minBet);
-			}
-			if (
-				canRaise &&
-				betAmount > 0 &&
-				betAmount < minRaiseTo &&
-				betAmount !== maxBetOrRaise
-			) {
-				setBetAmount(minRaiseTo);
-			}
-			if ((canBet || canRaise) && betAmount > maxBetOrRaise) {
-				setBetAmount(maxBetOrRaise);
-			}
-		}
-	}, [
-		isMyTurn,
-		canBet,
-		canRaise,
-		minBet,
-		minRaiseTo,
-		maxBetOrRaise,
-		playerStack,
-		betAmount,
-	]);
 
 	return (
 		<div className="container mx-auto max-w-5xl px-4 py-2">
@@ -566,16 +639,16 @@ function RouteComponent() {
 							<span className="font-medium text-sm">Join Code:</span>
 							<div className="flex items-center rounded-md border bg-secondary px-2 py-1">
 								<span className="font-mono text-sm tracking-wider">
-									{room?.joinCode
+									{room.joinCode
 										? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
-										: "Loading..."}
+										: "N/A"}
 								</span>
 								<Button
 									variant="ghost"
 									size="icon"
 									className="ml-1 h-6 w-6"
 									onClick={handleCopyCode}
-									disabled={!room?.joinCode}
+									disabled={!room.joinCode || isCopied}
 									title="Copy Join Code"
 								>
 									{isCopied ? (
@@ -587,6 +660,11 @@ function RouteComponent() {
 							</div>
 							<span
 								className={`ml-2 font-medium text-xs ${isConnected ? "text-green-600" : "text-red-600"}`}
+								title={
+									isConnected
+										? "Connected to room server"
+										: "Disconnected from room server"
+								}
 							>
 								{isConnected ? "● Connected" : "○ Disconnected"}
 							</span>
@@ -605,7 +683,7 @@ function RouteComponent() {
 									{togglePlay.isPending ? "..." : playButtonText}
 								</Button>
 							)}
-							{isAdmin && room?.isActive && (
+							{isAdmin && room.isActive && (
 								<Button
 									variant="destructive"
 									size="sm"
@@ -624,7 +702,7 @@ function RouteComponent() {
 								</Button>
 							)}
 							{isAdmin &&
-								room?.isActive &&
+								room.isActive &&
 								(!gameState ||
 									gameState.phase === "waiting" ||
 									gameState.phase === "end_hand") && (
@@ -635,17 +713,14 @@ function RouteComponent() {
 										disabled={
 											startGame.isPending ||
 											!isConnected ||
-											activeMembers.length < 2 ||
 											activeMembers.filter((m) => m.wantsToPlayNextHand)
-												.length < 2
+												.length < 2 // Check players *wanting* to play
 										}
 										title={
-											activeMembers.length < 2
-												? "Need at least 2 active players in the room"
-												: activeMembers.filter((m) => m.wantsToPlayNextHand)
-															.length < 2
-													? "Need at least 2 players ready for the next hand"
-													: "Start the next hand"
+											activeMembers.filter((m) => m.wantsToPlayNextHand)
+												.length < 2
+												? "Need at least 2 players ready for the next hand"
+												: "Start the next hand"
 										}
 									>
 										{startGame.isPending ? "Starting..." : "Start Game"}
@@ -676,13 +751,13 @@ function RouteComponent() {
 						<h2 className="mb-2 font-medium">Room Info</h2>
 						<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground text-sm">
 							<p>
-								Players: {activeMembers.length}/{room?.maxPlayers}
+								Players: {activeMembers.length}/{room.maxPlayers}
 							</p>
-							<p>Starting Stack: {room?.startingStack}</p>
-							<p>Small Blind: {room?.smallBlind}</p>
-							<p>Big Blind: {room?.bigBlind}</p>
-							<p>Ante: {room?.ante ?? 0}</p>
-							<p>Status: {room?.isActive ? "Open" : "Closed"}</p>
+							<p>Starting Stack: {room.startingStack}</p>
+							<p>Small Blind: {room.smallBlind}</p>
+							<p>Big Blind: {room.bigBlind}</p>
+							<p>Ante: {room.ante}</p>
+							<p>Status: {room.isActive ? "Open" : "Closed"}</p>
 						</div>
 					</div>
 
@@ -700,26 +775,32 @@ function RouteComponent() {
 											gameState?.smallBlindSeat === member.seatNumber;
 										const isBB = gameState?.bigBlindSeat === member.seatNumber;
 										const isCurrent =
-											gameState?.currentPlayerSeat === member.seatNumber;
+											gameState?.currentPlayerSeat === member.seatNumber &&
+											playerState &&
+											!playerState.isFolded &&
+											!playerState.isAllIn &&
+											!playerState.isSittingOut;
+
 										const displayStack =
 											gameState &&
+											playerState &&
 											gameState.phase !== "waiting" &&
-											gameState.phase !== "end_hand" &&
-											playerState
+											gameState.phase !== "end_hand"
 												? playerState.stack
 												: member.currentStack;
+
 										const memberWantsToPlay =
 											member.wantsToPlayNextHand === true;
 										const playStatusText =
-											room?.ante && room.ante > 0 ? "Ante" : "In";
+											room.ante > 0 ? "Ante Posted" : "Playing Next";
 
 										return (
 											<div
 												key={member.userId}
-												className={`flex items-center justify-between rounded p-2 ${member.isActive ? "bg-accent/50" : "bg-muted/30 opacity-60"} ${isCurrent && member.isActive && !playerState?.isFolded && !playerState?.isAllIn ? "ring-2 ring-primary" : ""}`}
+												className={`flex items-center justify-between rounded p-2 transition-all ${member.isActive ? "bg-accent/50" : "bg-muted/30 opacity-60"} ${isCurrent ? "ring-2 ring-primary ring-offset-1 ring-offset-background" : ""}`}
 											>
 												<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-													<span className="w-12 flex-shrink-0 text-muted-foreground text-xs">
+													<span className="w-14 flex-shrink-0 text-muted-foreground text-xs">
 														Seat {member.seatNumber}
 														{isDealer && " (D)"}
 														{isSB && " (SB)"}
@@ -728,7 +809,7 @@ function RouteComponent() {
 													<span className="font-medium text-sm">
 														{member.username ||
 															`User ${member.userId.substring(0, 4)}`}
-														{member.userId === room?.ownerId ? " (Admin)" : ""}
+														{member.userId === room.ownerId ? " (Admin)" : ""}
 														{member.userId === session.user.id ? " (You)" : ""}
 													</span>
 													{!member.isActive && (
@@ -785,10 +866,14 @@ function RouteComponent() {
 						)}
 					</div>
 
+					{/* Game Area Box */}
 					<div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border p-4">
 						<h2 className="mb-4 font-medium">
-							Game:{" "}
-							{gameState?.phase?.replace(/_/g, " ").toUpperCase() ?? "Waiting"}
+							Game Phase:{" "}
+							<span className="font-semibold">
+								{gameState?.phase?.replace(/_/g, " ").toUpperCase() ??
+									"WAITING"}
+							</span>
 						</h2>
 						{gameState ? (
 							<div className="w-full space-y-4 text-center">
@@ -796,9 +881,9 @@ function RouteComponent() {
 									<h3 className="mb-1 font-medium text-sm">Community Cards</h3>
 									<div className="flex min-h-[36px] items-center justify-center gap-2 font-mono text-lg">
 										{gameState.communityCards.length > 0 ? (
-											gameState.communityCards.map((card) => (
+											gameState.communityCards.map((card, index) => (
 												<span
-													key={`${card.rank}${card.suit}`}
+													key={`${card.rank}${card.suit}-${index}`}
 													className="rounded border bg-card px-2 py-1 shadow-sm"
 												>
 													{card.rank}
@@ -813,13 +898,17 @@ function RouteComponent() {
 
 								<p className="font-mono text-xl">Pot: {gameState.pot}</p>
 
-								<div className="max-h-24 overflow-y-auto text-muted-foreground text-xs">
-									{gameState.handHistory.slice(-5).map((line, i) => (
-										<p key={`${line}-${i}`}>{line}</p>
-									))}
+								<div className="max-h-24 overflow-y-auto rounded border bg-muted/50 p-2 text-muted-foreground text-xs">
+									{gameState.handHistory.length > 0 ? (
+										gameState.handHistory
+											.slice(-5)
+											.map((line, i) => <p key={i}>{line}</p>)
+									) : (
+										<p>No actions yet this hand.</p>
+									)}
 								</div>
 
-								{isMyTurn && (
+								{isMyTurn && currentPlayerState && (
 									<div className="mt-4 flex flex-wrap items-center justify-center gap-2 border-t pt-4">
 										<Button
 											variant="destructive"
@@ -846,14 +935,15 @@ function RouteComponent() {
 												<Input
 													type="number"
 													value={betAmount === 0 ? "" : betAmount}
-													onChange={(e) =>
+													onChange={(e) => {
+														const val = e.target.value;
 														setBetAmount(
-															Number.parseInt(e.target.value, 10) || 0,
-														)
-													}
+															val === "" ? 0 : Number.parseInt(val, 10) || 0,
+														);
+													}}
 													min={canBet ? minBet : minRaiseTo}
 													max={maxBetOrRaise}
-													step={room?.bigBlind ?? 1}
+													step={room.bigBlind > 0 ? room.bigBlind : 1}
 													className="h-8 w-24 rounded border bg-background px-2 text-sm"
 													placeholder={
 														canBet ? `Min ${minBet}` : `Min ${minRaiseTo}`
@@ -870,6 +960,7 @@ function RouteComponent() {
 														Bet {betAmount > 0 ? betAmount : ""}
 													</Button>
 												)}
+												{/* Raise Button */}
 												{canRaise && (
 													<Button
 														size="sm"
@@ -890,16 +981,14 @@ function RouteComponent() {
 												size="sm"
 												onClick={() => {
 													const allInAmount = playerStack + playerCurrentBet;
-													if (canBet) {
+													if (
+														canBet ||
+														(canRaise && allInAmount > currentBet)
+													) {
+														const actionType = canBet ? "bet" : "raise";
 														sendMessage({
 															type: "action",
-															action: "bet",
-															amount: allInAmount,
-														});
-													} else if (canRaise && allInAmount > currentBet) {
-														sendMessage({
-															type: "action",
-															action: "raise",
+															action: actionType,
 															amount: allInAmount,
 														});
 													} else if (canCall) {
@@ -913,11 +1002,14 @@ function RouteComponent() {
 									</div>
 								)}
 
-								{gameState.currentPlayerSeat !== null && !isMyTurn && (
-									<p className="mt-4 text-sm">
-										Waiting for Seat {gameState.currentPlayerSeat}...
-									</p>
-								)}
+								{gameState.currentPlayerSeat !== null &&
+									!isMyTurn &&
+									gameState.phase !== "waiting" &&
+									gameState.phase !== "end_hand" && (
+										<p className="mt-4 text-muted-foreground text-sm">
+											Waiting for Seat {gameState.currentPlayerSeat}...
+										</p>
+									)}
 
 								{gameState.phase === "end_hand" && (
 									<p className="mt-4 font-semibold text-sm">
