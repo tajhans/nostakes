@@ -637,419 +637,436 @@ function RouteComponent() {
 	const maxBetOrRaise = playerStack + playerCurrentBet;
 
 	return (
-		<div className="container mx-auto max-w-5xl px-4 py-2">
-			<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
-				<div className="space-y-4">
-					<div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-						<div className="flex items-center gap-2">
-							<span className="font-medium text-sm">Join Code:</span>
-							<div className="flex items-center rounded-md border bg-secondary px-2 py-1">
-								<span className="font-mono text-sm tracking-wider">
-									{room.joinCode
-										? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
-										: "N/A"}
-								</span>
+		<TooltipProvider>
+			<div className="container mx-auto max-w-5xl px-4 py-2">
+				<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
+					<div className="space-y-4">
+						<div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+							<div className="flex items-center gap-2">
+								<span className="font-medium text-sm">Join Code:</span>
+								<div className="flex items-center rounded-md border bg-secondary px-2 py-1">
+									<span className="font-mono text-sm tracking-wider">
+										{room.joinCode
+											? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
+											: "N/A"}
+									</span>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<Button
+												variant="ghost"
+												size="icon"
+												className="ml-1 h-6 w-6"
+												onClick={handleCopyCode}
+												disabled={!room.joinCode || isCopied}
+											>
+												{isCopied ? (
+													<Check className="h-4 w-4 text-green-500" />
+												) : (
+													<Copy className="h-4 w-4" />
+												)}
+											</Button>
+										</TooltipTrigger>
+										<TooltipContent>
+											<p>Copy Join Code</p>
+										</TooltipContent>
+									</Tooltip>
+								</div>
 								<Tooltip>
-									<TooltipTrigger asChild>
-										<Button
-											variant="ghost"
-											size="icon"
-											className="ml-1 h-6 w-6"
-											onClick={handleCopyCode}
-											disabled={!room.joinCode || isCopied}
-										>
-											{isCopied ? (
-												<Check className="h-4 w-4 text-green-500" />
-											) : (
-												<Copy className="h-4 w-4" />
-											)}
-										</Button>
+									<TooltipTrigger>
+										{isConnected ? (
+											<CircleDot className="h-4 w-4 text-green-600" />
+										) : (
+											<Circle className="h-4 w-4 text-red-600" />
+										)}
 									</TooltipTrigger>
 									<TooltipContent>
-										<p>Copy Join Code</p>
+										<p>
+											{isConnected
+												? "Connected to room server"
+												: "Disconnected from room server"}
+										</p>
 									</TooltipContent>
 								</Tooltip>
 							</div>
-							<Tooltip>
-								<TooltipTrigger>
-									{isConnected ? (
-										<CircleDot className="h-4 w-4 text-green-600" />
-									) : (
-										<Circle className="h-4 w-4 text-red-600" />
-									)}
-								</TooltipTrigger>
-								<TooltipContent>
-									<p>
-										{isConnected
-											? "Connected to room server"
-											: "Disconnected from room server"}
-									</p>
-								</TooltipContent>
-							</Tooltip>
-						</div>
 
-						<div className="flex flex-wrap items-center justify-end gap-2">
-							{showPlayButton && currentUserMemberInfo?.isActive && (
-								<Button
-									variant={wantsToPlay ? "secondary" : "outline"}
-									size="sm"
-									onClick={() =>
-										togglePlay.mutate({ roomId, wantsToPlay: !wantsToPlay })
-									}
-									disabled={togglePlay.isPending || !isConnected}
-								>
-									{togglePlay.isPending ? "..." : playButtonText}
-								</Button>
-							)}
-							{isAdmin && room.isActive && (
-								<Button
-									variant="destructive"
-									size="sm"
-									onClick={() => {
-										if (
-											window.confirm(
-												"Are you sure you want to close this room? All players will be removed.",
-											)
-										) {
-											closeRoom.mutate(roomId);
-										}
-									}}
-									disabled={closeRoom.isPending || !isConnected}
-								>
-									{closeRoom.isPending ? "Closing..." : "Close Room"}
-								</Button>
-							)}
-							{isAdmin &&
-								room.isActive &&
-								(!gameState ||
-									gameState.phase === "waiting" ||
-									gameState.phase === "end_hand") && (
+							<div className="flex flex-wrap items-center justify-end gap-2">
+								{showPlayButton && currentUserMemberInfo?.isActive && (
 									<Button
-										variant="default"
+										variant={wantsToPlay ? "secondary" : "outline"}
 										size="sm"
-										onClick={() => startGame.mutate(roomId)}
-										disabled={
-											startGame.isPending ||
-											!isConnected ||
-											activeMembers.filter((m) => m.wantsToPlayNextHand)
-												.length < 2
+										onClick={() =>
+											togglePlay.mutate({ roomId, wantsToPlay: !wantsToPlay })
 										}
-										title={
-											activeMembers.filter((m) => m.wantsToPlayNextHand)
-												.length < 2
-												? "Need at least 2 players ready for the next hand"
-												: "Start the next hand"
-										}
+										disabled={togglePlay.isPending || !isConnected}
 									>
-										{startGame.isPending ? "Starting..." : "Start Game"}
+										{togglePlay.isPending ? "..." : playButtonText}
 									</Button>
 								)}
-							{!isAdmin && currentUserMemberInfo?.isActive && (
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => {
-										if (
-											window.confirm(
-												"Are you sure you want to leave this room?",
-											)
-										) {
-											leaveRoom.mutate(roomId);
-										}
-									}}
-									disabled={leaveRoom.isPending || !isConnected}
-								>
-									{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
-								</Button>
+								{isAdmin && room.isActive && (
+									<Button
+										variant="destructive"
+										size="sm"
+										onClick={() => {
+											if (
+												window.confirm(
+													"Are you sure you want to close this room? All players will be removed.",
+												)
+											) {
+												closeRoom.mutate(roomId);
+											}
+										}}
+										disabled={closeRoom.isPending || !isConnected}
+									>
+										{closeRoom.isPending ? "Closing..." : "Close Room"}
+									</Button>
+								)}
+								{isAdmin &&
+									room.isActive &&
+									(!gameState ||
+										gameState.phase === "waiting" ||
+										gameState.phase === "end_hand") && (
+										<Button
+											variant="default"
+											size="sm"
+											onClick={() => startGame.mutate(roomId)}
+											disabled={
+												startGame.isPending ||
+												!isConnected ||
+												activeMembers.filter((m) => m.wantsToPlayNextHand)
+													.length < 2
+											}
+											title={
+												activeMembers.filter((m) => m.wantsToPlayNextHand)
+													.length < 2
+													? "Need at least 2 players ready for the next hand"
+													: "Start the next hand"
+											}
+										>
+											{startGame.isPending ? "Starting..." : "Start Game"}
+										</Button>
+									)}
+								{!isAdmin && currentUserMemberInfo?.isActive && (
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => {
+											if (
+												window.confirm(
+													"Are you sure you want to leave this room?",
+												)
+											) {
+												leaveRoom.mutate(roomId);
+											}
+										}}
+										disabled={leaveRoom.isPending || !isConnected}
+									>
+										{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
+									</Button>
+								)}
+							</div>
+						</div>
+
+						<div className="rounded-lg border p-4">
+							<h2 className="mb-2 font-medium">Room Info</h2>
+							<div className="grid grid-cols-1 gap-x-4 gap-y-1 text-muted-foreground text-sm sm:grid-cols-2">
+								<p>
+									Players: {activeMembers.length}/{room.maxPlayers}
+								</p>
+								<p>Starting Stack: {room.startingStack}</p>
+								<p>Small Blind: {room.smallBlind}</p>
+								<p>Big Blind: {room.bigBlind}</p>
+								<p>Ante: {room.ante}</p>
+								<p>Status: {room.isActive ? "Open" : "Closed"}</p>
+							</div>
+						</div>
+
+						<div className="rounded-lg border p-4">
+							<h2 className="mb-2 font-medium">Players</h2>
+							{members.length > 0 ? (
+								<div className="grid gap-2">
+									{members
+										.sort((a, b) => a.seatNumber - b.seatNumber)
+										.map((member) => {
+											const playerState =
+												gameState?.playerStates[member.userId];
+											const isDealer =
+												gameState?.dealerSeat === member.seatNumber;
+											const isSB =
+												gameState?.smallBlindSeat === member.seatNumber;
+											const isBB =
+												gameState?.bigBlindSeat === member.seatNumber;
+											const isCurrent =
+												gameState?.currentPlayerSeat === member.seatNumber &&
+												playerState &&
+												!playerState.isFolded &&
+												!playerState.isAllIn &&
+												!playerState.isSittingOut;
+
+											const displayStack =
+												gameState &&
+												playerState &&
+												gameState.phase !== "waiting" &&
+												gameState.phase !== "end_hand"
+													? playerState.stack
+													: member.currentStack;
+
+											const memberWantsToPlay =
+												member.wantsToPlayNextHand === true;
+											const playStatusText =
+												room.ante > 0 ? "Ante Posted" : "Playing Next";
+
+											return (
+												<div
+													key={member.userId}
+													className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded p-2 transition-all ${member.isActive ? "bg-accent/50" : "bg-muted/30 opacity-60"} ${isCurrent ? "ring-2 ring-primary ring-offset-1 ring-offset-background" : ""}`}
+												>
+													<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+														<span className="w-14 flex-shrink-0 text-muted-foreground text-xs">
+															Seat {member.seatNumber}
+															{isDealer && " (D)"}
+															{isSB && " (SB)"}
+															{isBB && " (BB)"}
+														</span>
+														<span className="font-medium text-sm">
+															{member.username ||
+																`User ${member.userId.substring(0, 4)}`}
+															{member.userId === room.ownerId ? " (Admin)" : ""}
+															{member.userId === session.user.id
+																? " (You)"
+																: ""}
+														</span>
+														{!member.isActive && (
+															<span className="rounded bg-destructive/20 px-1.5 py-0.5 text-destructive text-xs">
+																Left
+															</span>
+														)}
+														{playerState?.isFolded && (
+															<span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs">
+																Folded
+															</span>
+														)}
+														{playerState?.isAllIn && (
+															<span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-xs text-yellow-500">
+																ALL-IN
+															</span>
+														)}
+														{memberWantsToPlay &&
+															showPlayButton &&
+															member.isActive && (
+																<span className="rounded bg-green-500/20 px-1.5 py-0.5 text-green-600 text-xs">
+																	{playStatusText}
+																</span>
+															)}
+														{member.userId === session.user.id &&
+															playerState?.hand &&
+															playerState.hand.length > 0 &&
+															!playerState.isFolded && (
+																<span className="font-mono text-xs">
+																	[
+																	{playerState.hand
+																		.map((c) => c.rank + c.suit)
+																		.join(" ")}
+																	]
+																</span>
+															)}
+														{(playerState?.currentBet ?? 0) > 0 && (
+															<span className="rounded bg-primary/20 px-1.5 py-0.5 font-mono text-xs">
+																Bet: {playerState?.currentBet}
+															</span>
+														)}
+													</div>
+													<span className="font-mono text-sm">
+														{displayStack}
+													</span>
+												</div>
+											);
+										})}
+								</div>
+							) : (
+								<p className="text-muted-foreground text-sm">
+									No players in the room yet.
+								</p>
+							)}
+						</div>
+
+						<div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border p-4">
+							<h2 className="mb-4 font-medium">
+								Game Phase:{" "}
+								<span className="font-semibold">
+									{gameState?.phase?.replace(/_/g, " ").toUpperCase() ??
+										"WAITING"}
+								</span>
+							</h2>
+							{gameState ? (
+								<div className="w-full space-y-4 text-center">
+									<div className="mb-4">
+										<h3 className="mb-1 font-medium text-sm">
+											Community Cards
+										</h3>
+										<div className="flex min-h-[36px] flex-wrap items-center justify-center gap-2 font-mono text-lg">
+											{gameState.communityCards.length > 0 ? (
+												gameState.communityCards.map((card, index) => (
+													<span
+														key={`${card.rank}${card.suit}-${index}`}
+														className="rounded border bg-card px-2 py-1 shadow-sm"
+													>
+														{card.rank}
+														{card.suit}
+													</span>
+												))
+											) : (
+												<span className="text-muted-foreground text-sm">
+													--
+												</span>
+											)}
+										</div>
+									</div>
+
+									<p className="font-mono text-xl">Pot: {gameState.pot}</p>
+
+									<div className="max-h-24 overflow-y-auto rounded border bg-muted/50 p-2 text-muted-foreground text-xs">
+										{gameState.handHistory.length > 0 ? (
+											gameState.handHistory
+												.slice(-5)
+												.map((line, i) => <p key={i}>{line}</p>)
+										) : (
+											<p>No actions yet this hand.</p>
+										)}
+									</div>
+
+									{isMyTurn && currentPlayerState && (
+										<div className="mt-4 flex flex-wrap items-center justify-center gap-2 border-t pt-4">
+											<Button
+												variant="destructive"
+												size="sm"
+												onClick={handleFold}
+											>
+												Fold
+											</Button>
+
+											{canCheck && (
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={handleCheck}
+												>
+													Check
+												</Button>
+											)}
+
+											{canCall && (
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={handleCall}
+												>
+													Call {callAmount}
+												</Button>
+											)}
+
+											{(canBet || canRaise) && (
+												<div className="flex flex-wrap items-center justify-center gap-1">
+													<Input
+														type="number"
+														value={betAmount === 0 ? "" : betAmount}
+														onChange={(e) => {
+															const val = e.target.value;
+															setBetAmount(
+																val === "" ? 0 : Number.parseInt(val, 10) || 0,
+															);
+														}}
+														min={canBet ? minBet : minRaiseTo}
+														max={maxBetOrRaise}
+														step={room.bigBlind > 0 ? room.bigBlind : 1}
+														className="h-8 w-24 rounded border bg-background px-2 text-sm"
+														placeholder={
+															canBet ? `Min ${minBet}` : `Min ${minRaiseTo}`
+														}
+													/>
+													{canBet && (
+														<Button
+															size="sm"
+															onClick={handleBet}
+															disabled={
+																betAmount < minBet || betAmount > maxBetOrRaise
+															}
+														>
+															Bet {betAmount > 0 ? betAmount : ""}
+														</Button>
+													)}
+													{canRaise && (
+														<Button
+															size="sm"
+															onClick={handleRaise}
+															disabled={
+																betAmount < minRaiseTo ||
+																betAmount > maxBetOrRaise
+															}
+														>
+															Raise to {betAmount > 0 ? betAmount : ""}
+														</Button>
+													)}
+												</div>
+											)}
+
+											{(canBet || canRaise || canCall) && playerStack > 0 && (
+												<Button
+													variant="secondary"
+													size="sm"
+													onClick={() => {
+														const allInAmount = playerStack + playerCurrentBet;
+														if (
+															canBet ||
+															(canRaise && allInAmount > currentBet)
+														) {
+															const actionType = canBet ? "bet" : "raise";
+															sendMessage({
+																type: "action",
+																action: actionType,
+																amount: allInAmount,
+															});
+														} else if (canCall) {
+															handleCall();
+														}
+													}}
+												>
+													All In ({playerStack})
+												</Button>
+											)}
+										</div>
+									)}
+
+									{gameState.currentPlayerSeat !== null &&
+										!isMyTurn &&
+										gameState.phase !== "waiting" &&
+										gameState.phase !== "end_hand" && (
+											<p className="mt-4 text-muted-foreground text-sm">
+												Waiting for Seat {gameState.currentPlayerSeat}...
+											</p>
+										)}
+
+									{gameState.phase === "end_hand" && (
+										<p className="mt-4 font-semibold text-sm">
+											Hand finished. Waiting for next hand...
+										</p>
+									)}
+								</div>
+							) : (
+								<p className="text-muted-foreground">
+									Waiting for game to start...
+								</p>
 							)}
 						</div>
 					</div>
 
-					<div className="rounded-lg border p-4">
-						<h2 className="mb-2 font-medium">Room Info</h2>
-						<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground text-sm">
-							<p>
-								Players: {activeMembers.length}/{room.maxPlayers}
-							</p>
-							<p>Starting Stack: {room.startingStack}</p>
-							<p>Small Blind: {room.smallBlind}</p>
-							<p>Big Blind: {room.bigBlind}</p>
-							<p>Ante: {room.ante}</p>
-							<p>Status: {room.isActive ? "Open" : "Closed"}</p>
-						</div>
-					</div>
-
-					<div className="rounded-lg border p-4">
-						<h2 className="mb-2 font-medium">Players</h2>
-						{members.length > 0 ? (
-							<div className="grid gap-2">
-								{members
-									.sort((a, b) => a.seatNumber - b.seatNumber)
-									.map((member) => {
-										const playerState = gameState?.playerStates[member.userId];
-										const isDealer =
-											gameState?.dealerSeat === member.seatNumber;
-										const isSB =
-											gameState?.smallBlindSeat === member.seatNumber;
-										const isBB = gameState?.bigBlindSeat === member.seatNumber;
-										const isCurrent =
-											gameState?.currentPlayerSeat === member.seatNumber &&
-											playerState &&
-											!playerState.isFolded &&
-											!playerState.isAllIn &&
-											!playerState.isSittingOut;
-
-										const displayStack =
-											gameState &&
-											playerState &&
-											gameState.phase !== "waiting" &&
-											gameState.phase !== "end_hand"
-												? playerState.stack
-												: member.currentStack;
-
-										const memberWantsToPlay =
-											member.wantsToPlayNextHand === true;
-										const playStatusText =
-											room.ante > 0 ? "Ante Posted" : "Playing Next";
-
-										return (
-											<div
-												key={member.userId}
-												className={`flex items-center justify-between rounded p-2 transition-all ${member.isActive ? "bg-accent/50" : "bg-muted/30 opacity-60"} ${isCurrent ? "ring-2 ring-primary ring-offset-1 ring-offset-background" : ""}`}
-											>
-												<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-													<span className="w-14 flex-shrink-0 text-muted-foreground text-xs">
-														Seat {member.seatNumber}
-														{isDealer && " (D)"}
-														{isSB && " (SB)"}
-														{isBB && " (BB)"}
-													</span>
-													<span className="font-medium text-sm">
-														{member.username ||
-															`User ${member.userId.substring(0, 4)}`}
-														{member.userId === room.ownerId ? " (Admin)" : ""}
-														{member.userId === session.user.id ? " (You)" : ""}
-													</span>
-													{!member.isActive && (
-														<span className="rounded bg-destructive/20 px-1.5 py-0.5 text-destructive text-xs">
-															Left
-														</span>
-													)}
-													{playerState?.isFolded && (
-														<span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs">
-															Folded
-														</span>
-													)}
-													{playerState?.isAllIn && (
-														<span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-xs text-yellow-500">
-															ALL-IN
-														</span>
-													)}
-													{memberWantsToPlay &&
-														showPlayButton &&
-														member.isActive && (
-															<span className="rounded bg-green-500/20 px-1.5 py-0.5 text-green-600 text-xs">
-																{playStatusText}
-															</span>
-														)}
-													{member.userId === session.user.id &&
-														playerState?.hand &&
-														playerState.hand.length > 0 &&
-														!playerState.isFolded && (
-															<span className="font-mono text-xs">
-																[
-																{playerState.hand
-																	.map((c) => c.rank + c.suit)
-																	.join(" ")}
-																]
-															</span>
-														)}
-													{(playerState?.currentBet ?? 0) > 0 && (
-														<span className="rounded bg-primary/20 px-1.5 py-0.5 font-mono text-xs">
-															Bet: {playerState?.currentBet}
-														</span>
-													)}
-												</div>
-												<span className="font-mono text-sm">
-													{displayStack}
-												</span>
-											</div>
-										);
-									})}
-							</div>
-						) : (
-							<p className="text-muted-foreground text-sm">
-								No players in the room yet.
-							</p>
-						)}
-					</div>
-
-					{/* Game Area Box */}
-					<div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border p-4">
-						<h2 className="mb-4 font-medium">
-							Game Phase:{" "}
-							<span className="font-semibold">
-								{gameState?.phase?.replace(/_/g, " ").toUpperCase() ??
-									"WAITING"}
-							</span>
-						</h2>
-						{gameState ? (
-							<div className="w-full space-y-4 text-center">
-								<div className="mb-4">
-									<h3 className="mb-1 font-medium text-sm">Community Cards</h3>
-									<div className="flex min-h-[36px] items-center justify-center gap-2 font-mono text-lg">
-										{gameState.communityCards.length > 0 ? (
-											gameState.communityCards.map((card, index) => (
-												<span
-													key={`${card.rank}${card.suit}-${index}`}
-													className="rounded border bg-card px-2 py-1 shadow-sm"
-												>
-													{card.rank}
-													{card.suit}
-												</span>
-											))
-										) : (
-											<span className="text-muted-foreground text-sm">--</span>
-										)}
-									</div>
-								</div>
-
-								<p className="font-mono text-xl">Pot: {gameState.pot}</p>
-
-								<div className="max-h-24 overflow-y-auto rounded border bg-muted/50 p-2 text-muted-foreground text-xs">
-									{gameState.handHistory.length > 0 ? (
-										gameState.handHistory
-											.slice(-5)
-											.map((line, i) => <p key={i}>{line}</p>)
-									) : (
-										<p>No actions yet this hand.</p>
-									)}
-								</div>
-
-								{isMyTurn && currentPlayerState && (
-									<div className="mt-4 flex flex-wrap items-center justify-center gap-2 border-t pt-4">
-										<Button
-											variant="destructive"
-											size="sm"
-											onClick={handleFold}
-										>
-											Fold
-										</Button>
-
-										{canCheck && (
-											<Button variant="outline" size="sm" onClick={handleCheck}>
-												Check
-											</Button>
-										)}
-
-										{canCall && (
-											<Button variant="outline" size="sm" onClick={handleCall}>
-												Call {callAmount}
-											</Button>
-										)}
-
-										{(canBet || canRaise) && (
-											<div className="flex flex-wrap items-center justify-center gap-1">
-												<Input
-													type="number"
-													value={betAmount === 0 ? "" : betAmount}
-													onChange={(e) => {
-														const val = e.target.value;
-														setBetAmount(
-															val === "" ? 0 : Number.parseInt(val, 10) || 0,
-														);
-													}}
-													min={canBet ? minBet : minRaiseTo}
-													max={maxBetOrRaise}
-													step={room.bigBlind > 0 ? room.bigBlind : 1}
-													className="h-8 w-24 rounded border bg-background px-2 text-sm"
-													placeholder={
-														canBet ? `Min ${minBet}` : `Min ${minRaiseTo}`
-													}
-												/>
-												{canBet && (
-													<Button
-														size="sm"
-														onClick={handleBet}
-														disabled={
-															betAmount < minBet || betAmount > maxBetOrRaise
-														}
-													>
-														Bet {betAmount > 0 ? betAmount : ""}
-													</Button>
-												)}
-												{/* Raise Button */}
-												{canRaise && (
-													<Button
-														size="sm"
-														onClick={handleRaise}
-														disabled={
-															betAmount < minRaiseTo ||
-															betAmount > maxBetOrRaise
-														}
-													>
-														Raise to {betAmount > 0 ? betAmount : ""}
-													</Button>
-												)}
-											</div>
-										)}
-										{(canBet || canRaise || canCall) && playerStack > 0 && (
-											<Button
-												variant="secondary"
-												size="sm"
-												onClick={() => {
-													const allInAmount = playerStack + playerCurrentBet;
-													if (
-														canBet ||
-														(canRaise && allInAmount > currentBet)
-													) {
-														const actionType = canBet ? "bet" : "raise";
-														sendMessage({
-															type: "action",
-															action: actionType,
-															amount: allInAmount,
-														});
-													} else if (canCall) {
-														handleCall();
-													}
-												}}
-											>
-												All In ({playerStack})
-											</Button>
-										)}
-									</div>
-								)}
-
-								{gameState.currentPlayerSeat !== null &&
-									!isMyTurn &&
-									gameState.phase !== "waiting" &&
-									gameState.phase !== "end_hand" && (
-										<p className="mt-4 text-muted-foreground text-sm">
-											Waiting for Seat {gameState.currentPlayerSeat}...
-										</p>
-									)}
-
-								{gameState.phase === "end_hand" && (
-									<p className="mt-4 font-semibold text-sm">
-										Hand finished. Waiting for next hand...
-									</p>
-								)}
-							</div>
-						) : (
-							<p className="text-muted-foreground">
-								Waiting for game to start...
-							</p>
-						)}
-					</div>
+					<RoomChat
+						messages={chatMessages}
+						sendMessage={sendChatMessage}
+						isConnected={isConnected}
+						currentUserId={session.user.id}
+					/>
 				</div>
-
-				<RoomChat
-					messages={chatMessages}
-					sendMessage={sendChatMessage}
-					isConnected={isConnected}
-					currentUserId={session.user.id}
-				/>
 			</div>
-		</div>
+		</TooltipProvider>
 	);
 }
