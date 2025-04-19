@@ -6,8 +6,12 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+	InputOTP,
+	InputOTPGroup,
+	InputOTPSeparator,
+	InputOTPSlot,
+} from "@/components/ui/input-otp";
 import { trpcClient } from "@/utils/trpc";
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
@@ -16,7 +20,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 const joinRoomSchema = z.object({
-	joinCode: z.string().min(1, "Join code is required"),
+	joinCode: z.string().length(8, "Room code must be 8 characters"),
 });
 
 type JoinRoomFormData = z.infer<typeof joinRoomSchema>;
@@ -65,24 +69,28 @@ export default function JoinRoomForm() {
 				<div className="grid gap-4">
 					<form.Field name="joinCode">
 						{(field) => (
-							<div className="grid grid-cols-4 items-center gap-4">
-								<Label htmlFor={field.name} className="text-right">
-									Room Code
-								</Label>
-								<Input
-									id={field.name}
-									name={field.name}
+							<div className="flex flex-col items-center gap-4">
+								<InputOTP
+									maxLength={8}
 									value={field.state.value}
-									onBlur={field.handleBlur}
-									onChange={(e) => field.handleChange(e.target.value)}
-									className="col-span-3"
-									placeholder="Enter room code"
-								/>
+									onChange={(value) => field.handleChange(value)}
+								>
+									<InputOTPGroup>
+										<InputOTPSlot index={0} />
+										<InputOTPSlot index={1} />
+										<InputOTPSlot index={2} />
+										<InputOTPSlot index={3} />
+									</InputOTPGroup>
+									<InputOTPSeparator />
+									<InputOTPGroup>
+										<InputOTPSlot index={4} />
+										<InputOTPSlot index={5} />
+										<InputOTPSlot index={6} />
+										<InputOTPSlot index={7} />
+									</InputOTPGroup>
+								</InputOTP>
 								{field.state.meta.errors ? (
-									<div
-										role="alert"
-										className="col-span-3 col-start-2 text-red-500 text-sm"
-									>
+									<div role="alert" className="text-red-500 text-sm">
 										{field.state.meta.errors.join(", ")}
 									</div>
 								) : null}

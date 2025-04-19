@@ -1,15 +1,79 @@
 import Loader from "@/components/loader";
 import { RoomChat } from "@/components/room-chat";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { authClient } from "@/lib/auth-client";
 import { trpc } from "@/utils/trpc";
 import { trpcClient } from "@/utils/trpc";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-// --- Types (mirroring server types) ---
+type Suit = "C" | "D" | "H" | "S";
+type Rank =
+	| "2"
+	| "3"
+	| "4"
+	| "5"
+	| "6"
+	| "7"
+	| "8"
+	| "9"
+	| "T"
+	| "J"
+	| "Q"
+	| "K"
+	| "A";
+
+interface Card {
+	rank: Rank;
+	suit: Suit;
+}
+
+type GamePhase =
+	| "waiting"
+	| "preflop"
+	| "flop"
+	| "turn"
+	| "river"
+	| "showdown"
+	| "end_hand";
+
+interface PlayerState {
+	userId: string;
+	seatNumber: number;
+	stack: number;
+	hand: Card[];
+	currentBet: number;
+	totalBet: number;
+	hasActed: boolean;
+	isFolded: boolean;
+	isAllIn: boolean;
+	isSittingOut: boolean;
+}
+
+interface GameState {
+	roomId: string;
+	phase: GamePhase;
+	communityCards: Card[];
+	pot: number;
+	currentBet: number;
+	minRaiseAmount: number;
+	dealerSeat: number;
+	smallBlindSeat: number;
+	bigBlindSeat: number;
+	currentPlayerSeat: number | null;
+	lastActionPlayerSeat: number | null;
+	playerStates: Record<string, PlayerState>;
+	handHistory: string[];
+	lastUpdateTime: number;
+	roomConfig: { smallBlind: number; bigBlind: number; ante: number };
+}
+
+type ClientGameState = Omit<GameState, "deck">;
+
 interface ChatMessage {
 	type: "chat";
 	id: string;
@@ -20,6 +84,11 @@ interface ChatMessage {
 	timestamp: number;
 }
 
+interface ClientChatMessage {
+	type: "chat";
+	message: string;
+}
+
 interface MessageHistory {
 	type: "history";
 	messages: ChatMessage[];
@@ -27,12 +96,14 @@ interface MessageHistory {
 
 interface RoomMemberInfo {
 	userId: string;
-	username: string | null; // Allow null from DB join
+	username: string;
 	seatNumber: number;
 	currentStack: number;
 	isActive: boolean;
-	image?: string | null; // Add image if available
-	// Add other relevant fields from the grouped query if needed
+	wantsToPlayNextHand?: boolean;
+	id?: string;
+	image?: string | null;
+	joinedAt?: Date;
 }
 
 interface RoomStateUpdate {
@@ -44,13 +115,38 @@ interface RoomClosed {
 	type: "room_closed";
 }
 
+interface GameStateUpdate {
+	type: "game_state";
+	gameState: ClientGameState;
+}
+
+type ClientPokerAction =
+	| { type: "action"; action: "fold" }
+	| { type: "action"; action: "check" }
+	| { type: "action"; action: "call" }
+	| { type: "action"; action: "bet"; amount: number }
+	| { type: "action"; action: "raise"; amount: number };
+
 type ServerWebSocketMessage =
 	| ChatMessage
 	| MessageHistory
 	| RoomStateUpdate
-	| RoomClosed;
+	| RoomClosed
+	| GameStateUpdate;
 
-// --- Component ---
+interface RoomData {
+	id: string;
+	createdAt: string;
+	startingStack: number;
+	smallBlind: number;
+	bigBlind: number;
+	ante: number;
+	joinCode: string;
+	maxPlayers: number;
+	isActive: boolean;
+	ownerId: string;
+	members: RoomMemberInfo[];
+}
 
 export const Route = createFileRoute("/room")({
 	validateSearch: (search) => ({
@@ -66,18 +162,33 @@ function RouteComponent() {
 	const navigate = useNavigate({ from: Route.fullPath });
 	const queryClient = useQueryClient();
 
-	// Local state for real-time data
 	const [members, setMembers] = useState<RoomMemberInfo[]>([]);
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 	const [isConnected, setIsConnected] = useState(false);
+	const [gameState, setGameState] = useState<ClientGameState | null>(null);
 	const wsRef = useRef<WebSocket | null>(null);
+	const [betAmount, setBetAmount] = useState<number>(0);
+	const [isCopied, setIsCopied] = useState(false);
 
-	// Fetch initial room data (including members) via tRPC
-	// We use getRooms and find the specific room. Consider a getRoomById tRPC procedure later.
 	const { data: initialRoomData, isLoading: isRoomLoading } = useQuery({
 		...trpc.getRooms.queryOptions(),
 		enabled: !!session,
-		select: (data) => data.find((r) => r.id === roomId),
+		select: (data): RoomData | undefined => data.find((r) => r.id === roomId),
+		staleTime: 5 * 60 * 1000,
+		gcTime: 10 * 60 * 1000,
+	});
+
+	const startGame = useMutation({
+		mutationFn: async (rId: string) => {
+			return trpcClient.startGame.mutate({ roomId: rId });
+		},
+		onSuccess: () => {
+			toast.success("Game started!");
+			queryClient.invalidateQueries({ queryKey: trpc.getRooms.queryKey() });
+		},
+		onError: (error) => {
+			toast.error(`Failed to start game: ${error.message}`);
+		},
 	});
 
 	const closeRoom = useMutation({
@@ -105,8 +216,31 @@ function RouteComponent() {
 		},
 	});
 
+	const togglePlay = useMutation({
+		mutationFn: async (variables: { roomId: string; wantsToPlay: boolean }) => {
+			return trpcClient.togglePlayStatus.mutate(variables);
+		},
+		onSuccess: (_, variables) => {
+			const actionText = variables.wantsToPlay ? "IN" : "OUT";
+			const typeText = (initialRoomData?.ante ?? 0) > 0 ? "ante" : "hand";
+			toast.success(`You are now ${actionText} for the next ${typeText}.`);
+		},
+		onError: (error) => {
+			toast.error(`Failed to update status: ${error.message}`);
+		},
+	});
+
 	useEffect(() => {
-		if (!session?.user || !roomId || !initialRoomData) {
+		if (isSessionPending || isRoomLoading || !session?.user || !roomId) {
+			return;
+		}
+		if (!isRoomLoading && !initialRoomData) {
+			toast.error("Room not found or access denied.");
+			navigate({ to: "/" });
+			return;
+		}
+
+		if (!initialRoomData) {
 			return;
 		}
 
@@ -115,7 +249,8 @@ function RouteComponent() {
 		}
 
 		const serverUrl = new URL(import.meta.env.VITE_SERVER_URL);
-		const wsUrl = `ws://${serverUrl.hostname}:3002?roomId=${roomId}&userId=${session.user.id}&username=${encodeURIComponent(session.user.username || "Anonymous")}`;
+		const wsProtocol = serverUrl.protocol === "https:" ? "wss" : "ws";
+		const wsUrl = `${wsProtocol}://${serverUrl.hostname}:3002?roomId=${roomId}&userId=${session.user.id}&username=${encodeURIComponent(session.user.username || "Anonymous")}`;
 		const ws = new WebSocket(wsUrl);
 		wsRef.current = ws;
 
@@ -140,13 +275,53 @@ function RouteComponent() {
 							data.messages.sort((a, b) => a.timestamp - b.timestamp),
 						);
 						break;
-					case "room_state":
-						setMembers(data.members);
+					case "room_state": {
+						const processedMembers: RoomMemberInfo[] = data.members.map(
+							(member) => {
+								let joinedAtDate: Date | undefined = undefined;
+								if (member.joinedAt) {
+									if (typeof member.joinedAt === "string") {
+										const parsedDate = new Date(member.joinedAt);
+										if (!Number.isNaN(parsedDate.getTime())) {
+											joinedAtDate = parsedDate;
+										} else {
+											console.warn(
+												`Could not parse joinedAt date string from WS: ${member.joinedAt}`,
+											);
+										}
+									} else if (member.joinedAt instanceof Date) {
+										joinedAtDate = member.joinedAt;
+									}
+								}
+								return {
+									...member,
+									joinedAt: joinedAtDate,
+								};
+							},
+						);
+
+						setMembers(processedMembers);
+
+						queryClient.setQueryData<RoomData[] | undefined>(
+							trpc.getRooms.queryKey(),
+							(oldData): RoomData[] | undefined => {
+								if (!oldData) return undefined;
+								return oldData.map((r) =>
+									r.id === roomId ? { ...r, members: processedMembers } : r,
+								);
+							},
+						);
 						break;
+					}
 					case "room_closed":
 						toast.info("The room has been closed by the owner.");
-						ws.close();
+						ws.close(1000, "Room closed by owner");
 						navigate({ to: "/" });
+						break;
+					case "game_state":
+						console.log("Game State Received:", data.gameState);
+						setGameState(data.gameState);
+						setBetAmount(0);
 						break;
 					default:
 						console.warn("Received unknown WebSocket message type:", data);
@@ -159,9 +334,13 @@ function RouteComponent() {
 		ws.onclose = (event) => {
 			console.log("WebSocket disconnected", event.code, event.reason);
 			setIsConnected(false);
-			// Optional: Implement reconnection logic here if needed
-			if (event.code !== 1000 && event.code !== 1005 && event.code !== 1011) {
-				toast.error("Chat connection lost. Please refresh the page.");
+			if (event.code !== 1000 && event.code !== 1005) {
+				if (
+					event.reason !== "Room closed by owner" &&
+					event.reason !== "Client navigating away"
+				) {
+					toast.error("Chat connection lost.");
+				}
 			}
 			wsRef.current = null;
 		};
@@ -174,29 +353,101 @@ function RouteComponent() {
 		};
 
 		return () => {
-			console.log("Closing WebSocket connection");
-			ws.close(1000, "Client navigating away");
-			wsRef.current = null;
+			if (wsRef.current) {
+				console.log("Closing WebSocket connection on component unmount");
+				wsRef.current.close(1000, "Client navigating away");
+				wsRef.current = null;
+			}
 		};
-	}, [roomId, session, initialRoomData, navigate]);
+	}, [
+		roomId,
+		session,
+		isSessionPending,
+		initialRoomData,
+		isRoomLoading,
+		navigate,
+		queryClient,
+	]);
 
 	useEffect(() => {
 		if (initialRoomData?.members) {
-			setMembers(initialRoomData.members);
+			setMembers(initialRoomData.members as RoomMemberInfo[]);
 		}
 	}, [initialRoomData]);
 
-	const sendChatMessage = (message: string) => {
-		if (
-			wsRef.current &&
-			wsRef.current.readyState === WebSocket.OPEN &&
-			message.trim()
-		) {
-			wsRef.current.send(
-				JSON.stringify({ type: "chat", message: message.trim() }),
-			);
+	const sendMessage = (message: ClientChatMessage | ClientPokerAction) => {
+		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+			console.log("Sending WS Message:", message);
+			wsRef.current.send(JSON.stringify(message));
 		} else {
-			toast.error("Cannot send message. Chat not connected.");
+			toast.error("Cannot send message. Connection not active.");
+		}
+	};
+
+	const sendChatMessage = (messageText: string) => {
+		if (messageText.trim()) {
+			sendMessage({ type: "chat", message: messageText.trim() });
+		}
+	};
+
+	const handleCopyCode = async () => {
+		if (!room?.joinCode) return;
+		const codeToCopy = room.joinCode;
+
+		try {
+			if (navigator.clipboard?.writeText) {
+				await navigator.clipboard.writeText(codeToCopy);
+				setIsCopied(true);
+				toast.success("Room code copied to clipboard!");
+				setTimeout(() => setIsCopied(false), 2000);
+			} else {
+				const textArea = document.createElement("textarea");
+				textArea.value = codeToCopy;
+				textArea.style.position = "fixed";
+				textArea.style.top = "-9999px";
+				textArea.style.left = "-9999px";
+				document.body.appendChild(textArea);
+				textArea.focus();
+				textArea.select();
+				try {
+					const successful = document.execCommand("copy");
+					if (successful) {
+						setIsCopied(true);
+						toast.success("Room code copied to clipboard!");
+						setTimeout(() => setIsCopied(false), 2000);
+					} else {
+						throw new Error("Fallback copy command failed");
+					}
+				} catch (err) {
+					console.error("Fallback copy failed: ", err);
+					toast.error("Failed to copy room code using fallback.");
+				} finally {
+					document.body.removeChild(textArea);
+				}
+			}
+		} catch (err) {
+			console.error("Failed to copy room code: ", err);
+			toast.error("Failed to copy room code.");
+		}
+	};
+
+	const handleFold = () => sendMessage({ type: "action", action: "fold" });
+	const handleCheck = () => sendMessage({ type: "action", action: "check" });
+	const handleCall = () => sendMessage({ type: "action", action: "call" });
+	const handleBet = () => {
+		const amount = Math.floor(betAmount);
+		if (amount > 0) {
+			sendMessage({ type: "action", action: "bet", amount: amount });
+		} else {
+			toast.error("Invalid bet amount");
+		}
+	};
+	const handleRaise = () => {
+		const amount = Math.floor(betAmount);
+		if (amount > (gameState?.currentBet ?? 0)) {
+			sendMessage({ type: "action", action: "raise", amount: amount });
+		} else {
+			toast.error("Invalid raise amount");
 		}
 	};
 
@@ -205,7 +456,6 @@ function RouteComponent() {
 	}
 
 	if (!session?.user) {
-		navigate({ to: "/login", search: { redirect: Route.fullPath } });
 		return <Loader />;
 	}
 
@@ -218,7 +468,7 @@ function RouteComponent() {
 					to it.
 				</p>
 				<Button onClick={() => navigate({ to: "/" })} className="mt-4">
-					Go to Dashboard
+					Go to Home
 				</Button>
 			</div>
 		);
@@ -227,21 +477,134 @@ function RouteComponent() {
 	const room = initialRoomData;
 	const activeMembers = members.filter((m) => m.isActive);
 	const isAdmin = session.user.id === room?.ownerId;
+	const currentPlayerState = gameState?.playerStates[session.user.id];
+	const isMyTurn =
+		!!currentPlayerState &&
+		gameState?.currentPlayerSeat === currentPlayerState?.seatNumber &&
+		!currentPlayerState?.isFolded &&
+		!currentPlayerState?.isAllIn &&
+		!currentPlayerState?.isSittingOut;
+
+	const currentUserMemberInfo = members.find(
+		(m) => m.userId === session.user.id,
+	);
+
+	const showPlayButton =
+		room?.isActive &&
+		(!gameState ||
+			gameState.phase === "waiting" ||
+			gameState.phase === "end_hand");
+
+	const wantsToPlay = currentUserMemberInfo?.wantsToPlayNextHand === true;
+	const playButtonText =
+		room?.ante && room.ante > 0
+			? wantsToPlay
+				? `Retract Ante (${room.ante})`
+				: `Post Ante (${room.ante})`
+			: wantsToPlay
+				? "Leave Next Hand"
+				: "Enter Next Hand";
+
+	const currentBet = gameState?.currentBet ?? 0;
+	const minRaiseAmount = gameState?.minRaiseAmount ?? room?.bigBlind ?? 0;
+	const playerCurrentBet = currentPlayerState?.currentBet ?? 0;
+	const playerStack = currentPlayerState?.stack ?? 0;
+
+	const canCheck = isMyTurn && currentBet === playerCurrentBet;
+	const canCall = isMyTurn && currentBet > playerCurrentBet && playerStack > 0;
+	const canBet = isMyTurn && currentBet === 0 && playerStack > 0;
+	const canRaise =
+		isMyTurn && currentBet > 0 && playerStack > currentBet - playerCurrentBet;
+
+	const callAmount = Math.min(currentBet - playerCurrentBet, playerStack);
+	const minBet = Math.min(room?.bigBlind ?? 1, playerStack);
+	const minRaiseTo = Math.min(
+		currentBet + minRaiseAmount,
+		playerStack + playerCurrentBet,
+	);
+	const maxBetOrRaise = playerStack + playerCurrentBet;
+
+	useEffect(() => {
+		if (isMyTurn) {
+			if (
+				canBet &&
+				betAmount > 0 &&
+				betAmount < minBet &&
+				betAmount !== playerStack
+			) {
+				setBetAmount(minBet);
+			}
+			if (
+				canRaise &&
+				betAmount > 0 &&
+				betAmount < minRaiseTo &&
+				betAmount !== maxBetOrRaise
+			) {
+				setBetAmount(minRaiseTo);
+			}
+			if ((canBet || canRaise) && betAmount > maxBetOrRaise) {
+				setBetAmount(maxBetOrRaise);
+			}
+		}
+	}, [
+		isMyTurn,
+		canBet,
+		canRaise,
+		minBet,
+		minRaiseTo,
+		maxBetOrRaise,
+		playerStack,
+		betAmount,
+	]);
 
 	return (
 		<div className="container mx-auto max-w-5xl px-4 py-2">
 			<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
 				<div className="space-y-4">
-					<div className="mb-4 flex items-center justify-between gap-4">
-						<div>
-							<h1 className="font-bold text-lg">Room {room?.joinCode}</h1>
+					<div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+						<div className="flex items-center gap-2">
+							<span className="font-medium text-sm">Join Code:</span>
+							<div className="flex items-center rounded-md border bg-secondary px-2 py-1">
+								<span className="font-mono text-sm tracking-wider">
+									{room?.joinCode
+										? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
+										: "Loading..."}
+								</span>
+								<Button
+									variant="ghost"
+									size="icon"
+									className="ml-1 h-6 w-6"
+									onClick={handleCopyCode}
+									disabled={!room?.joinCode}
+									title="Copy Join Code"
+								>
+									{isCopied ? (
+										<Check className="h-4 w-4 text-green-500" />
+									) : (
+										<Copy className="h-4 w-4" />
+									)}
+								</Button>
+							</div>
 							<span
-								className={`text-xs ${isConnected ? "text-green-500" : "text-red-500"}`}
+								className={`ml-2 font-medium text-xs ${isConnected ? "text-green-600" : "text-red-600"}`}
 							>
-								{isConnected ? "Connected" : "Disconnected"}
+								{isConnected ? "● Connected" : "○ Disconnected"}
 							</span>
 						</div>
-						<div className="flex gap-2">
+
+						<div className="flex flex-wrap items-center justify-end gap-2">
+							{showPlayButton && currentUserMemberInfo?.isActive && (
+								<Button
+									variant={wantsToPlay ? "secondary" : "outline"}
+									size="sm"
+									onClick={() =>
+										togglePlay.mutate({ roomId, wantsToPlay: !wantsToPlay })
+									}
+									disabled={togglePlay.isPending || !isConnected}
+								>
+									{togglePlay.isPending ? "..." : playButtonText}
+								</Button>
+							)}
 							{isAdmin && room?.isActive && (
 								<Button
 									variant="destructive"
@@ -260,7 +623,35 @@ function RouteComponent() {
 									{closeRoom.isPending ? "Closing..." : "Close Room"}
 								</Button>
 							)}
-							{!isAdmin && (
+							{isAdmin &&
+								room?.isActive &&
+								(!gameState ||
+									gameState.phase === "waiting" ||
+									gameState.phase === "end_hand") && (
+									<Button
+										variant="default"
+										size="sm"
+										onClick={() => startGame.mutate(roomId)}
+										disabled={
+											startGame.isPending ||
+											!isConnected ||
+											activeMembers.length < 2 ||
+											activeMembers.filter((m) => m.wantsToPlayNextHand)
+												.length < 2
+										}
+										title={
+											activeMembers.length < 2
+												? "Need at least 2 active players in the room"
+												: activeMembers.filter((m) => m.wantsToPlayNextHand)
+															.length < 2
+													? "Need at least 2 players ready for the next hand"
+													: "Start the next hand"
+										}
+									>
+										{startGame.isPending ? "Starting..." : "Start Game"}
+									</Button>
+								)}
+							{!isAdmin && currentUserMemberInfo?.isActive && (
 								<Button
 									variant="outline"
 									size="sm"
@@ -283,64 +674,270 @@ function RouteComponent() {
 
 					<div className="rounded-lg border p-4">
 						<h2 className="mb-2 font-medium">Room Info</h2>
-						<div className="text-muted-foreground text-sm">
+						<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground text-sm">
 							<p>
 								Players: {activeMembers.length}/{room?.maxPlayers}
 							</p>
 							<p>Starting Stack: {room?.startingStack}</p>
+							<p>Small Blind: {room?.smallBlind}</p>
+							<p>Big Blind: {room?.bigBlind}</p>
+							<p>Ante: {room?.ante ?? 0}</p>
 							<p>Status: {room?.isActive ? "Open" : "Closed"}</p>
 						</div>
 					</div>
 
 					<div className="rounded-lg border p-4">
 						<h2 className="mb-2 font-medium">Players</h2>
-						{activeMembers.length > 0 ? (
+						{members.length > 0 ? (
 							<div className="grid gap-2">
-								{activeMembers
+								{members
 									.sort((a, b) => a.seatNumber - b.seatNumber)
-									.map((member) => (
-										<div
-											key={member.userId}
-											className="flex items-center justify-between rounded bg-accent/50 p-2"
-										>
-											<div className="flex items-center gap-2">
-												<span className="text-muted-foreground text-xs">
-													Seat {member.seatNumber}
-												</span>
-												<span className="font-medium text-sm">
-													{member.username ||
-														`User ${member.userId.substring(0, 4)}`}
-													{member.userId === room?.ownerId ? " Admin" : ""}
-													{member.userId === session.user.id ? " You" : ""}
+									.map((member) => {
+										const playerState = gameState?.playerStates[member.userId];
+										const isDealer =
+											gameState?.dealerSeat === member.seatNumber;
+										const isSB =
+											gameState?.smallBlindSeat === member.seatNumber;
+										const isBB = gameState?.bigBlindSeat === member.seatNumber;
+										const isCurrent =
+											gameState?.currentPlayerSeat === member.seatNumber;
+										const displayStack =
+											gameState &&
+											gameState.phase !== "waiting" &&
+											gameState.phase !== "end_hand" &&
+											playerState
+												? playerState.stack
+												: member.currentStack;
+										const memberWantsToPlay =
+											member.wantsToPlayNextHand === true;
+										const playStatusText =
+											room?.ante && room.ante > 0 ? "Ante" : "In";
+
+										return (
+											<div
+												key={member.userId}
+												className={`flex items-center justify-between rounded p-2 ${member.isActive ? "bg-accent/50" : "bg-muted/30 opacity-60"} ${isCurrent && member.isActive && !playerState?.isFolded && !playerState?.isAllIn ? "ring-2 ring-primary" : ""}`}
+											>
+												<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+													<span className="w-12 flex-shrink-0 text-muted-foreground text-xs">
+														Seat {member.seatNumber}
+														{isDealer && " (D)"}
+														{isSB && " (SB)"}
+														{isBB && " (BB)"}
+													</span>
+													<span className="font-medium text-sm">
+														{member.username ||
+															`User ${member.userId.substring(0, 4)}`}
+														{member.userId === room?.ownerId ? " (Admin)" : ""}
+														{member.userId === session.user.id ? " (You)" : ""}
+													</span>
+													{!member.isActive && (
+														<span className="rounded bg-destructive/20 px-1.5 py-0.5 text-destructive text-xs">
+															Left
+														</span>
+													)}
+													{playerState?.isFolded && (
+														<span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs">
+															Folded
+														</span>
+													)}
+													{playerState?.isAllIn && (
+														<span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-xs text-yellow-500">
+															ALL-IN
+														</span>
+													)}
+													{memberWantsToPlay &&
+														showPlayButton &&
+														member.isActive && (
+															<span className="rounded bg-green-500/20 px-1.5 py-0.5 text-green-600 text-xs">
+																{playStatusText}
+															</span>
+														)}
+													{member.userId === session.user.id &&
+														playerState?.hand &&
+														playerState.hand.length > 0 &&
+														!playerState.isFolded && (
+															<span className="font-mono text-xs">
+																[
+																{playerState.hand
+																	.map((c) => c.rank + c.suit)
+																	.join(" ")}
+																]
+															</span>
+														)}
+													{(playerState?.currentBet ?? 0) > 0 && (
+														<span className="rounded bg-primary/20 px-1.5 py-0.5 font-mono text-xs">
+															Bet: {playerState?.currentBet}
+														</span>
+													)}
+												</div>
+												<span className="font-mono text-sm">
+													{displayStack}
 												</span>
 											</div>
-											<span className="font-mono text-sm">
-												{member.currentStack}
-											</span>
-										</div>
-									))}
+										);
+									})}
 							</div>
 						) : (
 							<p className="text-muted-foreground text-sm">
-								No active players.
+								No players in the room yet.
 							</p>
 						)}
 					</div>
 
-					{/* Placeholder for Game Area */}
-					<div className="flex min-h-[200px] items-center justify-center rounded-lg border p-4">
-						<p className="text-muted-foreground">
-							Poker Game Area - Coming Soon!
-						</p>
+					<div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border p-4">
+						<h2 className="mb-4 font-medium">
+							Game:{" "}
+							{gameState?.phase?.replace(/_/g, " ").toUpperCase() ?? "Waiting"}
+						</h2>
+						{gameState ? (
+							<div className="w-full space-y-4 text-center">
+								<div className="mb-4">
+									<h3 className="mb-1 font-medium text-sm">Community Cards</h3>
+									<div className="flex min-h-[36px] items-center justify-center gap-2 font-mono text-lg">
+										{gameState.communityCards.length > 0 ? (
+											gameState.communityCards.map((card) => (
+												<span
+													key={`${card.rank}${card.suit}`}
+													className="rounded border bg-card px-2 py-1 shadow-sm"
+												>
+													{card.rank}
+													{card.suit}
+												</span>
+											))
+										) : (
+											<span className="text-muted-foreground text-sm">--</span>
+										)}
+									</div>
+								</div>
+
+								<p className="font-mono text-xl">Pot: {gameState.pot}</p>
+
+								<div className="max-h-24 overflow-y-auto text-muted-foreground text-xs">
+									{gameState.handHistory.slice(-5).map((line, i) => (
+										<p key={`${line}-${i}`}>{line}</p>
+									))}
+								</div>
+
+								{isMyTurn && (
+									<div className="mt-4 flex flex-wrap items-center justify-center gap-2 border-t pt-4">
+										<Button
+											variant="destructive"
+											size="sm"
+											onClick={handleFold}
+										>
+											Fold
+										</Button>
+
+										{canCheck && (
+											<Button variant="outline" size="sm" onClick={handleCheck}>
+												Check
+											</Button>
+										)}
+
+										{canCall && (
+											<Button variant="outline" size="sm" onClick={handleCall}>
+												Call {callAmount}
+											</Button>
+										)}
+
+										{(canBet || canRaise) && (
+											<div className="flex flex-wrap items-center justify-center gap-1">
+												<Input
+													type="number"
+													value={betAmount === 0 ? "" : betAmount}
+													onChange={(e) =>
+														setBetAmount(
+															Number.parseInt(e.target.value, 10) || 0,
+														)
+													}
+													min={canBet ? minBet : minRaiseTo}
+													max={maxBetOrRaise}
+													step={room?.bigBlind ?? 1}
+													className="h-8 w-24 rounded border bg-background px-2 text-sm"
+													placeholder={
+														canBet ? `Min ${minBet}` : `Min ${minRaiseTo}`
+													}
+												/>
+												{canBet && (
+													<Button
+														size="sm"
+														onClick={handleBet}
+														disabled={
+															betAmount < minBet || betAmount > maxBetOrRaise
+														}
+													>
+														Bet {betAmount > 0 ? betAmount : ""}
+													</Button>
+												)}
+												{canRaise && (
+													<Button
+														size="sm"
+														onClick={handleRaise}
+														disabled={
+															betAmount < minRaiseTo ||
+															betAmount > maxBetOrRaise
+														}
+													>
+														Raise to {betAmount > 0 ? betAmount : ""}
+													</Button>
+												)}
+											</div>
+										)}
+										{(canBet || canRaise || canCall) && playerStack > 0 && (
+											<Button
+												variant="secondary"
+												size="sm"
+												onClick={() => {
+													const allInAmount = playerStack + playerCurrentBet;
+													if (canBet) {
+														sendMessage({
+															type: "action",
+															action: "bet",
+															amount: allInAmount,
+														});
+													} else if (canRaise && allInAmount > currentBet) {
+														sendMessage({
+															type: "action",
+															action: "raise",
+															amount: allInAmount,
+														});
+													} else if (canCall) {
+														handleCall();
+													}
+												}}
+											>
+												All In ({playerStack})
+											</Button>
+										)}
+									</div>
+								)}
+
+								{gameState.currentPlayerSeat !== null && !isMyTurn && (
+									<p className="mt-4 text-sm">
+										Waiting for Seat {gameState.currentPlayerSeat}...
+									</p>
+								)}
+
+								{gameState.phase === "end_hand" && (
+									<p className="mt-4 font-semibold text-sm">
+										Hand finished. Waiting for next hand...
+									</p>
+								)}
+							</div>
+						) : (
+							<p className="text-muted-foreground">
+								Waiting for game to start...
+							</p>
+						)}
 					</div>
 				</div>
 
-				{/* Right Column: Chat */}
 				<RoomChat
 					messages={chatMessages}
 					sendMessage={sendChatMessage}
 					isConnected={isConnected}
-					currentUserId={session.user.id} // Pass current user ID for styling
+					currentUserId={session.user.id}
 				/>
 			</div>
 		</div>

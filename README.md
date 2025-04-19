@@ -12,7 +12,8 @@ This project was created with [Better-T-Stack](https://github.com/AmanVarshney01
 - **tRPC** - End-to-end type-safe APIs
 - **Bun** - Runtime environment
 - **Drizzle** - TypeScript-first ORM
-- **PostgreSQL** - Database engine
+- **PostgreSQL** - DB for auth and persistent data
+- **Redis** - DB for non-persistent data
 - **Authentication** - Email & password authentication with Better Auth
 - **Biome** - Linting and formatting
 - **Husky** - Git hooks for code quality

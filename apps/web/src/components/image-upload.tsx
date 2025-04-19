@@ -16,7 +16,7 @@ export function ImageUpload({ onImageSelect }: ImageUploadProps) {
 			return;
 		}
 
-		const maxSize = 5 * 1024 * 1024; // 5MB
+		const maxSize = 5 * 1024 * 1024;
 		if (file.size > maxSize) {
 			toast.error("Image must be less than 5MB");
 			return;

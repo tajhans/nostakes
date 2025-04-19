@@ -7,19 +7,38 @@ import { db } from "../db";
 import { user } from "../db/schema/auth";
 import { room, roomMember } from "../db/schema/rooms";
 import {
+	getNextActivePlayerSeat,
+	isBettingRoundOver,
+	startNewHand,
+} from "../lib/poker";
+import {
 	cleanupRoomMessages,
+	deleteGameState,
 	deleteRoomMembers,
+	getAllRoomMembers,
+	getGameState,
+	getRoomMember,
+	resetAllWantsToPlayStatuses,
+	setGameState,
 	setRoomMember,
 	updateRoomMemberActiveStatus,
+	updateWantsToPlayStatus,
 } from "../lib/redis";
 import type { RoomMemberInfo } from "../lib/redis";
 import { s3Client } from "../lib/s3";
 import { protectedProcedure, publicProcedure, router } from "../lib/trpc";
-import { broadcastRoomClosed, broadcastRoomState } from "../lib/ws";
+import {
+	broadcastGameState,
+	broadcastRoomClosed,
+	broadcastRoomState,
+} from "../lib/ws";
 
 const createRoomSchema = z.object({
 	players: z.number().min(2, "Minimum 2 players").max(8, "Maximum 8 players"),
 	startingStack: z.number().positive("Starting stack must be positive"),
+	smallBlind: z.number().positive("Small blind must be positive"),
+	bigBlind: z.number().positive("Big blind must be positive"),
+	ante: z.number().min(0, "Ante cannot be negative").default(5),
 });
 
 const joinRoomSchema = z.object({
@@ -32,6 +51,15 @@ const closeRoomSchema = z.object({
 
 const leaveRoomSchema = z.object({
 	roomId: z.string().min(1, "Room ID is required"),
+});
+
+const startGameSchema = z.object({
+	roomId: z.string().min(1, "Room ID is required"),
+});
+
+const togglePlayStatusSchema = z.object({
+	roomId: z.string().min(1, "Room ID is required"),
+	wantsToPlay: z.boolean(),
 });
 
 export const appRouter = router({
@@ -49,11 +77,33 @@ export const appRouter = router({
 	createRoom: protectedProcedure
 		.input(createRoomSchema)
 		.mutation(async ({ input, ctx }) => {
+			if (input.bigBlind <= input.smallBlind) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Big blind must be greater than small blind.",
+				});
+			}
+			if (input.bigBlind > input.startingStack) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Big blind cannot be greater than the starting stack.",
+				});
+			}
+			if (input.ante > input.startingStack) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Ante cannot be greater than the starting stack.",
+				});
+			}
+
 			const [newRoom] = await db
 				.insert(room)
 				.values({
 					maxPlayers: input.players,
 					startingStack: input.startingStack,
+					smallBlind: input.smallBlind,
+					bigBlind: input.bigBlind,
+					ante: input.ante,
 					ownerId: ctx.session.user.id,
 				})
 				.returning();
@@ -75,6 +125,7 @@ export const appRouter = router({
 				seatNumber: newMember.seatNumber,
 				currentStack: newMember.currentStack,
 				isActive: newMember.isActive,
+				wantsToPlayNextHand: false,
 			};
 			await setRoomMember(newRoom.id, ownerInfo);
 
@@ -106,10 +157,13 @@ export const appRouter = router({
 
 			broadcastRoomClosed(input.roomId);
 
-			await cleanupRoomMessages(input.roomId);
-			await deleteRoomMembers(input.roomId);
-			await db.delete(roomMember).where(eq(roomMember.roomId, input.roomId));
-			await db.delete(room).where(eq(room.id, input.roomId));
+			await Promise.all([
+				cleanupRoomMessages(input.roomId),
+				deleteRoomMembers(input.roomId),
+				deleteGameState(input.roomId),
+				db.delete(roomMember).where(eq(roomMember.roomId, input.roomId)),
+				db.delete(room).where(eq(room.id, input.roomId)),
+			]);
 
 			return { success: true };
 		}),
@@ -152,67 +206,39 @@ export const appRouter = router({
 				.limit(1);
 
 			let memberInfo: RoomMemberInfo;
+			let currentStack = targetRoom.startingStack;
 
 			if (existingMember) {
-				if (existingMember.isActive) {
-					memberInfo = {
-						userId: existingMember.userId,
-						username: username,
-						seatNumber: existingMember.seatNumber,
-						currentStack: existingMember.currentStack,
-						isActive: true,
-					};
-					await db
-						.update(roomMember)
-						.set({ isActive: true })
-						.where(eq(roomMember.id, existingMember.id));
-				} else {
-					await db
-						.update(roomMember)
-						.set({ isActive: true })
-						.where(eq(roomMember.id, existingMember.id));
+				currentStack = existingMember.currentStack;
+				await db
+					.update(roomMember)
+					.set({ isActive: true })
+					.where(eq(roomMember.id, existingMember.id));
 
-					memberInfo = {
-						userId: existingMember.userId,
-						username: username,
-						seatNumber: existingMember.seatNumber,
-						currentStack: existingMember.currentStack,
-						isActive: true,
-					};
-				}
+				const redisMember = await getRoomMember(targetRoom.id, userId);
+
+				memberInfo = {
+					userId: existingMember.userId,
+					username: username,
+					seatNumber: existingMember.seatNumber,
+					currentStack: currentStack,
+					isActive: true,
+					wantsToPlayNextHand: redisMember?.wantsToPlayNextHand ?? false,
+				};
 			} else {
-				const [{ count }] = await db
-					.select({
-						count: sql<number>`count(*)::int`,
-					})
-					.from(roomMember)
-					.where(
-						and(
-							eq(roomMember.roomId, targetRoom.id),
-							eq(roomMember.isActive, true),
-						),
-					);
+				const currentMembers = await getAllRoomMembers(targetRoom.id);
+				const activeMemberCount = currentMembers.filter(
+					(m) => m.isActive,
+				).length;
 
-				if (count >= targetRoom.maxPlayers) {
+				if (activeMemberCount >= targetRoom.maxPlayers) {
 					throw new TRPCError({
 						code: "BAD_REQUEST",
 						message: "Room is full",
 					});
 				}
 
-				const takenSeats = await db
-					.select({ seatNumber: roomMember.seatNumber })
-					.from(roomMember)
-					.where(
-						and(
-							eq(roomMember.roomId, targetRoom.id),
-							eq(roomMember.isActive, true),
-						),
-					);
-
-				const occupiedSeats = new Set(
-					takenSeats.map((seat) => seat.seatNumber),
-				);
+				const occupiedSeats = new Set(currentMembers.map((m) => m.seatNumber));
 				let nextSeat = 1;
 				while (
 					occupiedSeats.has(nextSeat) &&
@@ -233,7 +259,7 @@ export const appRouter = router({
 					.values({
 						roomId: targetRoom.id,
 						userId: userId,
-						currentStack: targetRoom.startingStack,
+						currentStack: currentStack,
 						seatNumber: nextSeat,
 						isActive: true,
 					})
@@ -245,11 +271,15 @@ export const appRouter = router({
 					seatNumber: newMember.seatNumber,
 					currentStack: newMember.currentStack,
 					isActive: newMember.isActive,
+					wantsToPlayNextHand: false,
 				};
 			}
 
-			await setRoomMember(targetRoom.id, memberInfo);
-			await broadcastRoomState(targetRoom.id);
+			await Promise.all([
+				setRoomMember(targetRoom.id, memberInfo),
+				broadcastRoomState(targetRoom.id),
+				broadcastGameState(targetRoom.id),
+			]);
 
 			return targetRoom;
 		}),
@@ -266,105 +296,109 @@ export const appRouter = router({
 				.where(
 					and(eq(roomMember.roomId, roomId), eq(roomMember.userId, userId)),
 				)
-				.returning({ id: roomMember.id });
+				.returning({ id: roomMember.id, seatNumber: roomMember.seatNumber });
 
 			if (!updatedMember) {
 				console.warn(
 					`User ${userId} tried to leave room ${roomId} but was not found or already inactive.`,
 				);
-
-				return { success: true };
 			}
 
 			await updateRoomMemberActiveStatus(roomId, userId, false);
-			await broadcastRoomState(roomId);
+
+			const gameState = await getGameState(roomId);
+			let gameStatePromise = Promise.resolve();
+
+			if (gameState?.playerStates[userId]) {
+				const playerState = gameState.playerStates[userId];
+				if (!playerState.isFolded && !playerState.isSittingOut) {
+					playerState.isFolded = true;
+					playerState.isSittingOut = true;
+					gameState.handHistory.push(
+						`Seat ${playerState.seatNumber} left the room and folded.`,
+					);
+
+					if (gameState.currentPlayerSeat === playerState.seatNumber) {
+						gameState.currentPlayerSeat = getNextActivePlayerSeat(
+							gameState,
+							playerState.seatNumber,
+						);
+						if (gameState.currentPlayerSeat) {
+							gameState.handHistory.push(
+								`Seat ${gameState.currentPlayerSeat} is now next to act.`,
+							);
+						} else {
+							if (isBettingRoundOver(gameState)) {
+								gameState.handHistory.push("Betting round concluded.");
+							} else {
+								console.log(
+									`No next player found after Seat ${playerState.seatNumber} left and folded.`,
+								);
+							}
+						}
+					}
+					gameStatePromise = setGameState(roomId, gameState);
+				} else {
+					playerState.isSittingOut = true;
+					gameStatePromise = setGameState(roomId, gameState);
+				}
+			}
+
+			await gameStatePromise;
+			await Promise.all([
+				broadcastRoomState(roomId),
+				broadcastGameState(roomId),
+			]);
 
 			return { success: true };
 		}),
 
 	getRooms: protectedProcedure.query(async ({ ctx }) => {
-		const roomsData = await db
+		const userRoomsData = await db
 			.select({
 				id: room.id,
 				joinCode: room.joinCode,
 				maxPlayers: room.maxPlayers,
 				startingStack: room.startingStack,
+				smallBlind: room.smallBlind,
+				bigBlind: room.bigBlind,
+				ante: room.ante,
 				isActive: room.isActive,
 				createdAt: room.createdAt,
 				ownerId: room.ownerId,
-				memberId: roomMember.id,
-				memberUserId: roomMember.userId,
-				memberJoinedAt: roomMember.joinedAt,
-				memberCurrentStack: roomMember.currentStack,
-				memberIsActive: roomMember.isActive,
-				memberSeatNumber: roomMember.seatNumber,
-				memberUsername: user.username,
-				memberImage: user.image,
 			})
 			.from(room)
 			.leftJoin(roomMember, eq(roomMember.roomId, room.id))
-			.leftJoin(user, eq(roomMember.userId, user.id))
+			.where(
+				sql`${room.ownerId} = ${ctx.session.user.id} OR (${roomMember.userId} = ${ctx.session.user.id} AND ${roomMember.isActive} = true)`,
+			)
+			.groupBy(room.id)
 			.orderBy(desc(room.createdAt));
 
-		interface GroupedRoom {
-			id: string;
-			joinCode: string;
-			maxPlayers: number;
-			startingStack: number;
-			isActive: boolean;
-			createdAt: Date;
-			ownerId: string;
-			members: Array<{
-				id: string;
-				userId: string;
-				username: string | null;
-				image: string | null;
-				joinedAt: Date;
-				currentStack: number;
-				isActive: boolean;
-				seatNumber: number;
-			}>;
+		const roomIds = userRoomsData.map((r) => r.id);
+		if (roomIds.length === 0) {
+			return [];
 		}
 
-		const groupedRooms = roomsData.reduce<Record<string, GroupedRoom>>(
-			(acc, row) => {
-				const roomId = row.id;
-				if (!acc[roomId]) {
-					acc[roomId] = {
-						id: row.id,
-						joinCode: row.joinCode,
-						maxPlayers: row.maxPlayers,
-						startingStack: row.startingStack,
-						isActive: row.isActive,
-						createdAt: row.createdAt,
-						ownerId: row.ownerId,
-						members: [],
-					};
-				}
-				if (row.memberId && row.memberUserId) {
-					acc[roomId].members.push({
-						id: row.memberId,
-						userId: row.memberUserId,
-						username: row.memberUsername,
-						image: row.memberImage,
-						joinedAt: row.memberJoinedAt ?? new Date(),
-						currentStack: row.memberCurrentStack ?? 0,
-						isActive: row.memberIsActive ?? false,
-						seatNumber: row.memberSeatNumber ?? 0,
-					});
-				}
-				return acc;
-			},
-			{},
+		const membersByRoom: Record<string, RoomMemberInfo[]> = {};
+		await Promise.all(
+			roomIds.map(async (roomId) => {
+				membersByRoom[roomId] = await getAllRoomMembers(roomId);
+			}),
 		);
 
-		const userRooms = Object.values(groupedRooms).filter(
-			(r) =>
-				r.ownerId === ctx.session.user.id ||
-				r.members.some((m) => m.userId === ctx.session.user.id && m.isActive),
-		);
+		const result = userRoomsData.map((r) => {
+			const members = membersByRoom[r.id] || [];
+			return {
+				...r,
+				members: members.map((m) => ({
+					...m,
+					wantsToPlayNextHand: m.wantsToPlayNextHand ?? false,
+				})),
+			};
+		});
 
-		return userRooms;
+		return result;
 	}),
 
 	updateProfile: protectedProcedure
@@ -382,18 +416,20 @@ export const appRouter = router({
 				.then((rows) => rows[0]);
 
 			if (userProfile?.image) {
-				const existingKey = userProfile.image.split("/").pop();
-				if (existingKey) {
-					try {
+				try {
+					const urlParts = userProfile.image.split("/");
+					const existingKey = urlParts[urlParts.length - 1];
+					if (existingKey) {
 						await s3Client.send(
 							new DeleteObjectCommand({
 								Bucket: "nostakes",
 								Key: existingKey,
 							}),
 						);
-					} catch (error) {
-						console.error("Failed to delete old image:", error);
+						console.log(`Deleted old image: ${existingKey}`);
 					}
+				} catch (error) {
+					console.error("Failed to delete old image from R2:", error);
 				}
 			}
 
@@ -403,19 +439,27 @@ export const appRouter = router({
 					input.image.replace(/^data:image\/\w+;base64,/, ""),
 					"base64",
 				);
-
 				const key = `${nanoid()}.jpg`;
 
-				await s3Client.send(
-					new PutObjectCommand({
-						Bucket: "nostakes",
-						Key: key,
-						Body: buffer,
-						ContentType: "image/jpeg",
-					}),
-				);
+				try {
+					await s3Client.send(
+						new PutObjectCommand({
+							Bucket: "nostakes",
+							Key: key,
+							Body: buffer,
+							ContentType: "image/jpeg",
+						}),
+					);
 
-				imageUrl = `https://image.nostakes.poker/nostakes/${key}`;
+					imageUrl = `https://image.nostakes.poker/nostakes/${key}`;
+					console.log(`Uploaded new image: ${imageUrl}`);
+				} catch (error) {
+					console.error("Failed to upload image to R2:", error);
+					throw new TRPCError({
+						code: "INTERNAL_SERVER_ERROR",
+						message: "Failed to upload profile picture.",
+					});
+				}
 			}
 
 			await db
@@ -427,6 +471,153 @@ export const appRouter = router({
 				.where(eq(user.id, ctx.session.user.id));
 
 			return { imageUrl };
+		}),
+
+	startGame: protectedProcedure
+		.input(startGameSchema)
+		.mutation(async ({ input, ctx }) => {
+			const roomId = input.roomId;
+
+			const [targetRoom] = await db
+				.select({
+					ownerId: room.ownerId,
+					smallBlind: room.smallBlind,
+					bigBlind: room.bigBlind,
+					ante: room.ante,
+					isActive: room.isActive,
+					startingStack: room.startingStack,
+				})
+				.from(room)
+				.where(eq(room.id, roomId))
+				.limit(1);
+
+			if (!targetRoom) {
+				throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
+			}
+			if (!targetRoom.isActive) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Cannot start game in a closed room.",
+				});
+			}
+
+			if (targetRoom.ownerId !== ctx.session.user.id) {
+				throw new TRPCError({
+					code: "FORBIDDEN",
+					message: "Only the room owner can start the game.",
+				});
+			}
+
+			const currentMembers = await getAllRoomMembers(roomId);
+			const activeMembers = currentMembers.filter((m) => m.isActive);
+
+			if (activeMembers.length < 2) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Need at least 2 active players to start.",
+				});
+			}
+
+			const previousGameState = await getGameState(roomId);
+			if (
+				previousGameState &&
+				previousGameState.phase !== "waiting" &&
+				previousGameState.phase !== "end_hand"
+			) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Game already in progress.",
+				});
+			}
+
+			if (previousGameState?.phase === "end_hand") {
+				let membersUpdated = false;
+				for (const userId in previousGameState.playerStates) {
+					const playerState = previousGameState.playerStates[userId];
+					const memberInfo = activeMembers.find((m) => m.userId === userId);
+					if (
+						memberInfo?.isActive &&
+						memberInfo.currentStack !== playerState.stack
+					) {
+						memberInfo.currentStack = playerState.stack;
+						await setRoomMember(roomId, memberInfo);
+						membersUpdated = true;
+					}
+				}
+				if (membersUpdated) {
+					activeMembers.length = 0;
+					activeMembers.push(
+						...(await getAllRoomMembers(roomId)).filter((m) => m.isActive),
+					);
+				}
+			}
+
+			try {
+				const newGameState = await startNewHand(
+					roomId,
+					{
+						smallBlind: targetRoom.smallBlind,
+						bigBlind: targetRoom.bigBlind,
+						ante: targetRoom.ante,
+					},
+					activeMembers,
+					previousGameState,
+				);
+
+				await setGameState(roomId, newGameState);
+				await resetAllWantsToPlayStatuses(roomId);
+				await Promise.all([
+					broadcastGameState(roomId),
+					broadcastRoomState(roomId),
+				]);
+
+				return { success: true, message: "Game started." };
+			} catch (error: unknown) {
+				let errorMessage = "Failed to start game.";
+				if (error instanceof Error) {
+					errorMessage = `Failed to start game: ${error.message}`;
+				} else if (typeof error === "string") {
+					errorMessage = `Failed to start game: ${error}`;
+				}
+				console.error("Error starting game:", error);
+				await broadcastRoomState(roomId);
+				throw new TRPCError({
+					code: "INTERNAL_SERVER_ERROR",
+					message: errorMessage,
+				});
+			}
+		}),
+
+	togglePlayStatus: protectedProcedure
+		.input(togglePlayStatusSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { roomId, wantsToPlay } = input;
+			const userId = ctx.session.user.id;
+
+			const gameState = await getGameState(roomId);
+			if (
+				gameState &&
+				gameState.phase !== "waiting" &&
+				gameState.phase !== "end_hand"
+			) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Cannot change play status while hand is in progress.",
+				});
+			}
+
+			const userMember = await getRoomMember(roomId, userId);
+			if (!userMember || !userMember.isActive) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "User not found in room or is inactive.",
+				});
+			}
+
+			await updateWantsToPlayStatus(roomId, userId, wantsToPlay);
+			await broadcastRoomState(roomId);
+
+			return { success: true };
 		}),
 });
 

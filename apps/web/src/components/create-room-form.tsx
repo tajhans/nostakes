@@ -23,6 +23,16 @@ const createRoomSchema = z.object({
 	startingStack: z
 		.number({ message: "Must be a number" })
 		.positive("Starting stack must be positive"),
+	smallBlind: z
+		.number({ message: "Must be a number" })
+		.positive("Small blind must be positive"),
+	bigBlind: z
+		.number({ message: "Must be a number" })
+		.positive("Big blind must be positive"),
+	ante: z
+		.number({ message: "Must be a number" })
+		.positive("Big blind must be positive")
+		.default(5),
 });
 
 type CreateRoomFormData = z.infer<typeof createRoomSchema>;
@@ -47,6 +57,9 @@ export default function CreateRoomForm() {
 		defaultValues: {
 			players: 2,
 			startingStack: 1000,
+			smallBlind: 10,
+			bigBlind: 20,
+			ante: 5,
 		},
 		onSubmit: async ({ value }) => {
 			await createRoom.mutateAsync(value);
@@ -113,6 +126,87 @@ export default function CreateRoomForm() {
 									type="number"
 									className="col-span-3"
 									min={1}
+								/>
+								{field.state.meta.errors ? (
+									<div
+										role="alert"
+										className="col-span-3 col-start-2 text-red-500 text-sm"
+									>
+										{field.state.meta.errors.join(", ")}
+									</div>
+								) : null}
+							</div>
+						)}
+					</form.Field>
+					<form.Field name="smallBlind">
+						{(field) => (
+							<div className="grid grid-cols-4 items-center gap-4">
+								<Label htmlFor={field.name} className="text-right">
+									Small Blind
+								</Label>
+								<Input
+									id={field.name}
+									name={field.name}
+									value={field.state.value}
+									onBlur={field.handleBlur}
+									onChange={(e) => field.handleChange(e.target.valueAsNumber)}
+									type="number"
+									className="col-span-3"
+									min={1}
+								/>
+								{field.state.meta.errors ? (
+									<div
+										role="alert"
+										className="col-span-3 col-start-2 text-red-500 text-sm"
+									>
+										{field.state.meta.errors.join(", ")}
+									</div>
+								) : null}
+							</div>
+						)}
+					</form.Field>
+					<form.Field name="bigBlind">
+						{(field) => (
+							<div className="grid grid-cols-4 items-center gap-4">
+								<Label htmlFor={field.name} className="text-right">
+									Big Blind
+								</Label>
+								<Input
+									id={field.name}
+									name={field.name}
+									value={field.state.value}
+									onBlur={field.handleBlur}
+									onChange={(e) => field.handleChange(e.target.valueAsNumber)}
+									type="number"
+									className="col-span-3"
+									min={1}
+								/>
+								{field.state.meta.errors ? (
+									<div
+										role="alert"
+										className="col-span-3 col-start-2 text-red-500 text-sm"
+									>
+										{field.state.meta.errors.join(", ")}
+									</div>
+								) : null}
+							</div>
+						)}
+					</form.Field>
+					<form.Field name="ante">
+						{(field) => (
+							<div className="grid grid-cols-4 items-center gap-4">
+								<Label htmlFor={field.name} className="text-right">
+									Ante
+								</Label>
+								<Input
+									id={field.name}
+									name={field.name}
+									value={field.state.value}
+									onBlur={field.handleBlur}
+									onChange={(e) => field.handleChange(e.target.valueAsNumber)}
+									type="number"
+									className="col-span-3"
+									min={0}
 								/>
 								{field.state.meta.errors ? (
 									<div

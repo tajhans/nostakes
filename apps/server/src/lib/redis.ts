@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import type { GameState } from "./poker";
 
 export const redis = new Redis({
 	url: process.env.UPSTASH_REDIS_REST_URL || "",
@@ -23,8 +24,10 @@ export interface RoomMemberInfo {
 	seatNumber: number;
 	currentStack: number;
 	isActive: boolean;
+	wantsToPlayNextHand?: boolean;
 }
 
+const ROOM_GAME_STATE_KEY_PREFIX = "room_game";
 const ROOM_MEMBERS_KEY_PREFIX = "room_members";
 const ROOM_STATE_EXPIRY = 60 * 60 * 24;
 
@@ -38,8 +41,11 @@ export async function setRoomMember(
 ): Promise<void> {
 	try {
 		const key = getRoomMembersKey(roomId);
-		// Store the object directly; Upstash Redis handles serialization.
-		await redis.hset(key, { [memberInfo.userId]: memberInfo });
+		const memberDataToStore = {
+			...memberInfo,
+			wantsToPlayNextHand: memberInfo.wantsToPlayNextHand ?? false,
+		};
+		await redis.hset(key, { [memberInfo.userId]: memberDataToStore });
 		await redis.expire(key, ROOM_STATE_EXPIRY);
 	} catch (error) {
 		console.error(
@@ -55,9 +61,11 @@ export async function getRoomMember(
 ): Promise<RoomMemberInfo | null> {
 	try {
 		const key = getRoomMembersKey(roomId);
-		// Retrieve the object directly; Upstash Redis handles deserialization.
 		const member = await redis.hget<RoomMemberInfo>(key, userId);
-		return member; // Returns RoomMemberInfo or null if not found/error
+		if (member && member.wantsToPlayNextHand === undefined) {
+			member.wantsToPlayNextHand = false;
+		}
+		return member;
 	} catch (error) {
 		console.error(
 			`Failed to get room member ${userId} from room ${roomId}:`,
@@ -72,11 +80,12 @@ export async function getAllRoomMembers(
 ): Promise<RoomMemberInfo[]> {
 	try {
 		const key = getRoomMembersKey(roomId);
-		// Retrieve all members; Upstash Redis handles deserialization.
 		const membersMap = await redis.hgetall<Record<string, RoomMemberInfo>>(key);
 		if (!membersMap) return [];
-		// Values are already RoomMemberInfo objects.
-		return Object.values(membersMap);
+		return Object.values(membersMap).map((member) => ({
+			...member,
+			wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
+		}));
 	} catch (error) {
 		console.error(`Failed to get all members from room ${roomId}:`, error);
 		return [];
@@ -107,7 +116,9 @@ export async function updateRoomMemberActiveStatus(
 		const member = await getRoomMember(roomId, userId);
 		if (member) {
 			member.isActive = isActive;
-			// Use setRoomMember which now correctly handles object storage
+			if (!isActive) {
+				member.wantsToPlayNextHand = false;
+			}
 			await setRoomMember(roomId, member);
 		} else {
 			console.warn(
@@ -122,6 +133,52 @@ export async function updateRoomMemberActiveStatus(
 	}
 }
 
+export async function updateWantsToPlayStatus(
+	roomId: string,
+	userId: string,
+	wantsToPlay: boolean,
+): Promise<void> {
+	try {
+		const member = await getRoomMember(roomId, userId);
+		if (member) {
+			member.wantsToPlayNextHand = wantsToPlay;
+			await setRoomMember(roomId, member);
+		} else {
+			console.warn(
+				`Attempted to update play status for non-existent member ${userId} in room ${roomId}`,
+			);
+		}
+	} catch (error) {
+		console.error(
+			`Failed to update play status for member ${userId} in room ${roomId}:`,
+			error,
+		);
+	}
+}
+
+export async function resetAllWantsToPlayStatuses(
+	roomId: string,
+): Promise<void> {
+	try {
+		const members = await getAllRoomMembers(roomId);
+		const key = getRoomMembersKey(roomId);
+		const updates: Record<string, RoomMemberInfo> = {};
+		let needsUpdate = false;
+		for (const member of members) {
+			if (member.wantsToPlayNextHand) {
+				updates[member.userId] = { ...member, wantsToPlayNextHand: false };
+				needsUpdate = true;
+			}
+		}
+		if (needsUpdate) {
+			await redis.hset(key, updates);
+			await redis.expire(key, ROOM_STATE_EXPIRY);
+		}
+	} catch (error) {
+		console.error(`Failed to reset play statuses for room ${roomId}:`, error);
+	}
+}
+
 export async function deleteRoomMembers(roomId: string): Promise<void> {
 	try {
 		const key = getRoomMembersKey(roomId);
@@ -131,7 +188,6 @@ export async function deleteRoomMembers(roomId: string): Promise<void> {
 	}
 }
 
-// Chat message functions remain unchanged as they handle strings explicitly
 export async function getRecentMessages(
 	roomId: string,
 ): Promise<ChatMessage[]> {
@@ -164,5 +220,43 @@ export async function cleanupRoomMessages(roomId: string): Promise<void> {
 		await redis.del(`room:${roomId}:messages`);
 	} catch (error) {
 		console.error("Failed to cleanup room messages:", error);
+	}
+}
+
+function getRoomGameKey(roomId: string): string {
+	return `${ROOM_GAME_STATE_KEY_PREFIX}:${roomId}`;
+}
+
+export async function getGameState(roomId: string): Promise<GameState | null> {
+	try {
+		const key = getRoomGameKey(roomId);
+		const state = await redis.get<GameState>(key);
+		return state;
+	} catch (error) {
+		console.error(`Failed to get game state for room ${roomId}:`, error);
+		return null;
+	}
+}
+
+export async function setGameState(
+	roomId: string,
+	gameState: GameState,
+): Promise<void> {
+	try {
+		const key = getRoomGameKey(roomId);
+		gameState.lastUpdateTime = Date.now();
+		await redis.set(key, gameState, { ex: ROOM_STATE_EXPIRY });
+	} catch (error) {
+		console.error(`Failed to set game state for room ${roomId}:`, error);
+		throw error;
+	}
+}
+
+export async function deleteGameState(roomId: string): Promise<void> {
+	try {
+		const key = getRoomGameKey(roomId);
+		await redis.del(key);
+	} catch (error) {
+		console.error(`Failed to delete game state for room ${roomId}:`, error);
 	}
 }

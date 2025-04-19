@@ -8,8 +8,7 @@ import {
 import { customAlphabet, nanoid } from "nanoid";
 import { user } from "./auth";
 
-const alphabet =
-	"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
 const generateJoinCode = () => customAlphabet(alphabet, 8)();
 
 export const room = pgTable("room", {
@@ -28,6 +27,10 @@ export const room = pgTable("room", {
 		.$defaultFn(() => new Date()),
 	maxPlayers: integer("max_players").notNull(),
 	startingStack: integer("starting_stack").notNull(),
+	smallBlind: integer("small_blind").notNull(),
+	bigBlind: integer("big_blind").notNull(),
+	ante: integer("ante").notNull().default(5),
+	handDelaySeconds: integer("hand_delay_seconds").notNull().default(30),
 	isActive: boolean("is_active").notNull().default(true),
 	ownerId: text("owner_id")
 		.notNull()

@@ -30,7 +30,8 @@
 		"rules": {
 			"recommended": true,
 			"correctness": {
-				"useExhaustiveDependencies": "info"
+				"useExhaustiveDependencies": "info",
+				"noVoidElementsWithChildren": "off"
 			},
 			"nursery": {
 				"useSortedClasses": {
@@ -40,6 +41,13 @@
 						"functions": ["clsx", "cva", "cn"]
 					}
 				}
+			},
+			"suspicious": {
+				"noArrayIndexKey": "off"
+			},
+			"a11y": {
+				"useSemanticElements": "off",
+				"noRedundantRoles": "off"
 			}
 		}
 	},
