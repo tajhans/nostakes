@@ -2,12 +2,18 @@ import Loader from "@/components/loader";
 import { RoomChat } from "@/components/room-chat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { authClient } from "@/lib/auth-client";
 import { trpc } from "@/utils/trpc";
 import { trpcClient } from "@/utils/trpc";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Check, Copy } from "lucide-react";
+import { Check, Circle, CircleDot, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -580,7 +586,7 @@ function RouteComponent() {
 		);
 	}
 
-	const room = initialRoomData; // Use the confirmed data
+	const room = initialRoomData;
 	const activeMembers = members.filter((m) => m.isActive);
 	const isAdmin = session.user.id === room.ownerId;
 	const currentPlayerState = gameState?.playerStates[session.user.id];
@@ -643,31 +649,43 @@ function RouteComponent() {
 										? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
 										: "N/A"}
 								</span>
-								<Button
-									variant="ghost"
-									size="icon"
-									className="ml-1 h-6 w-6"
-									onClick={handleCopyCode}
-									disabled={!room.joinCode || isCopied}
-									title="Copy Join Code"
-								>
-									{isCopied ? (
-										<Check className="h-4 w-4 text-green-500" />
-									) : (
-										<Copy className="h-4 w-4" />
-									)}
-								</Button>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="ml-1 h-6 w-6"
+											onClick={handleCopyCode}
+											disabled={!room.joinCode || isCopied}
+										>
+											{isCopied ? (
+												<Check className="h-4 w-4 text-green-500" />
+											) : (
+												<Copy className="h-4 w-4" />
+											)}
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>
+										<p>Copy Join Code</p>
+									</TooltipContent>
+								</Tooltip>
 							</div>
-							<span
-								className={`ml-2 font-medium text-xs ${isConnected ? "text-green-600" : "text-red-600"}`}
-								title={
-									isConnected
-										? "Connected to room server"
-										: "Disconnected from room server"
-								}
-							>
-								{isConnected ? "● Connected" : "○ Disconnected"}
-							</span>
+							<Tooltip>
+								<TooltipTrigger>
+									{isConnected ? (
+										<CircleDot className="h-4 w-4 text-green-600" />
+									) : (
+										<Circle className="h-4 w-4 text-red-600" />
+									)}
+								</TooltipTrigger>
+								<TooltipContent>
+									<p>
+										{isConnected
+											? "Connected to room server"
+											: "Disconnected from room server"}
+									</p>
+								</TooltipContent>
+							</Tooltip>
 						</div>
 
 						<div className="flex flex-wrap items-center justify-end gap-2">
@@ -714,7 +732,7 @@ function RouteComponent() {
 											startGame.isPending ||
 											!isConnected ||
 											activeMembers.filter((m) => m.wantsToPlayNextHand)
-												.length < 2 // Check players *wanting* to play
+												.length < 2
 										}
 										title={
 											activeMembers.filter((m) => m.wantsToPlayNextHand)
