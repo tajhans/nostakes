@@ -1,4 +1,5 @@
 import type { ServerWebSocket } from "bun";
+import type { WSContext } from "hono/ws";
 import { nanoid } from "nanoid";
 import type { GameState, PlayerState } from "./poker";
 import { performAction } from "./poker";
@@ -93,7 +94,10 @@ type ClientPokerAction =
 
 type ClientWebSocketMessage = ClientChatMessage | ClientPokerAction;
 
-const rooms = new Map<string, Map<string, ServerWebSocket>>();
+const rooms = new Map<
+	string,
+	Map<string, WSContext<ServerWebSocket<undefined>>>
+>();
 const MAX_MESSAGE_LENGTH = 32;
 
 function broadcast(roomId: string, message: ServerWebSocketMessage) {
@@ -136,7 +140,6 @@ function broadcast(roomId: string, message: ServerWebSocketMessage) {
 				);
 			}
 		} else {
-			// Handle cleanup for non-open sockets
 			console.warn(
 				`Removing non-open WebSocket connection for user ${userId} in room ${roomId}. State: ${client.readyState}`,
 			);
@@ -209,7 +212,10 @@ export function handleWebSocket(
 	username: string,
 ) {
 	return {
-		onOpen: async (_event: Event, ws: ServerWebSocket<undefined>) => {
+		onOpen: async (
+			_event: Event,
+			ws: WSContext<ServerWebSocket<undefined>>,
+		) => {
 			if (!roomId || !userId || !username) {
 				console.error(
 					"WebSocket opened but missing required parameters. Closing.",
@@ -224,7 +230,10 @@ export function handleWebSocket(
 
 			let roomConnections = rooms.get(roomId);
 			if (!roomConnections) {
-				roomConnections = new Map<string, ServerWebSocket>();
+				roomConnections = new Map<
+					string,
+					WSContext<ServerWebSocket<undefined>>
+				>();
 				rooms.set(roomId, roomConnections);
 			}
 
@@ -286,7 +295,10 @@ export function handleWebSocket(
 			}
 		},
 
-		onMessage: async (event: MessageEvent, ws: ServerWebSocket<undefined>) => {
+		onMessage: async (
+			event: MessageEvent,
+			ws: WSContext<ServerWebSocket<undefined>>,
+		) => {
 			try {
 				const payload: ClientWebSocketMessage = JSON.parse(
 					event.data.toString(),
@@ -380,7 +392,10 @@ export function handleWebSocket(
 			}
 		},
 
-		onClose: async (event: CloseEvent, _ws: ServerWebSocket<undefined>) => {
+		onClose: async (
+			event: CloseEvent,
+			_ws: WSContext<ServerWebSocket<undefined>>,
+		) => {
 			console.log(
 				`WebSocket connection closed for user ${userId} in room ${roomId}. Code: ${event.code}, Reason: ${event.reason}`,
 			);
@@ -417,10 +432,10 @@ export function handleWebSocket(
 			}
 		},
 
-		onError: (error: Error, ws: ServerWebSocket<undefined>) => {
+		onError: (evt: Event, ws: WSContext<ServerWebSocket<undefined>>) => {
 			console.error(
-				`WebSocket error for user ${userId} in room ${roomId}:`,
-				error,
+				`WebSocket error event for user ${userId} in room ${roomId}:`,
+				evt,
 			);
 
 			const roomConnections = rooms.get(roomId);

@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { createBunWebSocket } from "hono/bun";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import type { WSContext } from "hono/ws";
 import { auth } from "./lib/auth";
 import { createContext } from "./lib/context";
 import { handleWebSocket } from "./lib/ws";
@@ -54,12 +55,12 @@ app.get(
 			);
 
 			return {
-				onOpen: (event: Event, ws: ServerWebSocket<undefined>) => {
+				onOpen: (event: Event, ws: WSContext<ServerWebSocket<undefined>>) => {
 					console.error("WS connection opened with missing params, closing.");
 					ws.close(1008, "Missing required query parameters");
 				},
-				onError: (error: Error, ws: ServerWebSocket<undefined>) => {
-					console.error("WS upgrade error due to missing params:", error);
+				onError: (evt: Event, ws: WSContext<ServerWebSocket<undefined>>) => {
+					console.error("WS upgrade error due to missing params:", evt);
 				},
 				onMessage: () => {},
 				onClose: () => {},
