@@ -54,11 +54,11 @@ app.get(
 			);
 
 			return {
-				onOpen: (_evt, ws) => {
+				open: (_evt, ws) => {
 					console.error("WS connection opened with missing params, closing.");
 					ws.close(1008, "Missing required query parameters");
 				},
-				onError: (err) => {
+				error: (err) => {
 					console.error("WS upgrade error due to missing params:", err);
 				},
 			};

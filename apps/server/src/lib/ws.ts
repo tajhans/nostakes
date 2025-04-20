@@ -209,7 +209,7 @@ export function handleWebSocket(
 	username: string,
 ) {
 	return {
-		async onOpen(_event: Event, ws: ServerWebSocket) {
+		async open(_event: Event, ws: ServerWebSocket) {
 			if (!roomId || !userId || !username) {
 				console.error(
 					"WebSocket opened but missing required parameters. Closing.",
@@ -286,7 +286,7 @@ export function handleWebSocket(
 			}
 		},
 
-		async onMessage(event: MessageEvent, ws: ServerWebSocket) {
+		async message(event: MessageEvent, ws: ServerWebSocket) {
 			try {
 				const payload: ClientWebSocketMessage = JSON.parse(
 					event.data.toString(),
@@ -380,7 +380,7 @@ export function handleWebSocket(
 			}
 		},
 
-		async onClose(event: CloseEvent, _ws: ServerWebSocket) {
+		async close(event: CloseEvent, _ws: ServerWebSocket) {
 			console.log(
 				`WebSocket connection closed for user ${userId} in room ${roomId}. Code: ${event.code}, Reason: ${event.reason}`,
 			);
@@ -417,7 +417,7 @@ export function handleWebSocket(
 			}
 		},
 
-		onError(error: Error, ws: ServerWebSocket) {
+		error(error: Error, ws: ServerWebSocket) {
 			console.error(
 				`WebSocket error for user ${userId} in room ${roomId}:`,
 				error,
