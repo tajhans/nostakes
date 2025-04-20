@@ -47,7 +47,8 @@
 			},
 			"a11y": {
 				"useSemanticElements": "off",
-				"noRedundantRoles": "off"
+				"noRedundantRoles": "off",
+				"useFocusableInteractive": "off"
 			}
 		}
 	},
