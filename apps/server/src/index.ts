@@ -54,13 +54,15 @@ app.get(
 			);
 
 			return {
-				open: (_evt, ws) => {
+				onOpen: (event: Event, ws: ServerWebSocket<undefined>) => {
 					console.error("WS connection opened with missing params, closing.");
 					ws.close(1008, "Missing required query parameters");
 				},
-				error: (err) => {
-					console.error("WS upgrade error due to missing params:", err);
+				onError: (error: Error, ws: ServerWebSocket<undefined>) => {
+					console.error("WS upgrade error due to missing params:", error);
 				},
+				onMessage: () => {},
+				onClose: () => {},
 			};
 		}
 
