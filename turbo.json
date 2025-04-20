@@ -5,7 +5,19 @@
 		"build": {
 			"dependsOn": ["^build"],
 			"inputs": ["$TURBO_DEFAULT$", ".env*"],
-			"outputs": ["dist/**"]
+			"outputs": ["dist/**"],
+			"env": [
+				"CORS_ORIGIN",
+				"BETTER_AUTH_URL",
+				"BETTER_AUTH_SECRET",
+				"DATABASE_URL",
+				"RESEND_API_KEY",
+				"R2_ENDPOINT",
+				"R2_ACCESS_KEY_ID",
+				"R2_SECRET_ACCESS_KEY",
+				"UPSTASH_REDIS_REST_URL",
+				"UPSTASH_REDIS_REST_TOKEN"
+			]
 		},
 		"lint": {
 			"dependsOn": ["^lint"]
