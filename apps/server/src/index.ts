@@ -1,15 +1,17 @@
 import { trpcServer } from "@hono/trpc-server";
+import type { ServerWebSocket } from "bun";
 import "dotenv/config";
 import { Hono } from "hono";
+import { createBunWebSocket } from "hono/bun";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { WebSocketServer } from "ws";
 import { auth } from "./lib/auth";
 import { createContext } from "./lib/context";
 import { handleWebSocket } from "./lib/ws";
 import { appRouter } from "./routers/index";
 
 const app = new Hono();
+const { upgradeWebSocket, websocket } = createBunWebSocket<ServerWebSocket>();
 
 app.use(logger());
 
@@ -39,20 +41,38 @@ app.get("/", (c) => {
 	return c.text("OK");
 });
 
-const wss = new WebSocketServer({ port: 3002 });
+app.get(
+	"/ws",
+	upgradeWebSocket((c) => {
+		const roomId = c.req.query("roomId");
+		const userId = c.req.query("userId");
+		const username = c.req.query("username");
 
-wss.on("connection", (ws, req) => {
-	const params = new URLSearchParams(req.url?.split("?")[1]);
-	const roomId = params.get("roomId");
-	const userId = params.get("userId");
-	const username = params.get("username");
+		if (!roomId || !userId || !username) {
+			console.error(
+				"WebSocket upgrade rejected: Missing roomId, userId, or username in query parameters.",
+			);
 
-	if (!roomId || !userId || !username) {
-		ws.close();
-		return;
-	}
+			return {
+				onOpen: (_evt, ws) => {
+					console.error("WS connection opened with missing params, closing.");
+					ws.close(1008, "Missing required query parameters");
+				},
+				onError: (err) => {
+					console.error("WS upgrade error due to missing params:", err);
+				},
+			};
+		}
 
-	handleWebSocket(ws, roomId, userId, username);
-});
+		console.log(
+			`WebSocket upgrade request for room ${roomId}, user ${userId} (${username})`,
+		);
 
-export default app;
+		return handleWebSocket(roomId, userId, username);
+	}),
+);
+
+export default {
+	fetch: app.fetch,
+	websocket,
+};

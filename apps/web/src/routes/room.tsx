@@ -133,12 +133,18 @@ type ClientPokerAction =
 	| { type: "action"; action: "bet"; amount: number }
 	| { type: "action"; action: "raise"; amount: number };
 
+interface ErrorMessage {
+	type: "error";
+	message: string;
+}
+
 type ServerWebSocketMessage =
 	| ChatMessage
 	| MessageHistory
 	| RoomStateUpdate
 	| RoomClosed
-	| GameStateUpdate;
+	| GameStateUpdate
+	| ErrorMessage;
 
 interface RoomData {
 	id: string;
@@ -237,15 +243,46 @@ function RouteComponent() {
 	});
 
 	useEffect(() => {
-		if (!session?.user || !roomId || !initialRoomData) {
+		if (
+			isSessionPending ||
+			!roomId ||
+			isRoomLoading ||
+			(initialRoomData === undefined && !isRoomLoading)
+		) {
 			console.log(
-				"WebSocket Effect: Prerequisites not met (session, roomId, or initialRoomData missing).",
+				"WebSocket Effect: Prerequisites not met (session pending, no roomId, room loading, or room not found).",
 			);
 			if (wsRef.current) {
 				console.log(
 					"WebSocket Effect: Closing existing connection due to unmet prerequisites.",
 				);
 				wsRef.current.close(1000, "Prerequisites not met");
+				wsRef.current = null;
+				setIsConnected(false);
+			}
+			return;
+		}
+
+		if (!initialRoomData) {
+			console.log("WebSocket Effect: Room data not found, not connecting.");
+			return;
+		}
+
+		if (!session?.user) {
+			console.log(
+				"WebSocket Effect: User session not available, not connecting.",
+			);
+			return;
+		}
+
+		const serverUrlString = import.meta.env.VITE_SERVER_URL;
+		if (!serverUrlString) {
+			console.error(
+				"VITE_SERVER_URL is not defined in environment variables. Cannot establish WebSocket connection.",
+			);
+			toast.error("Server configuration error. Unable to connect to the room.");
+			if (wsRef.current) {
+				wsRef.current.close(1000, "Configuration error");
 				wsRef.current = null;
 				setIsConnected(false);
 			}
@@ -260,9 +297,9 @@ function RouteComponent() {
 			wsRef.current = null;
 		}
 
-		const serverUrl = new URL(import.meta.env.VITE_SERVER_URL);
+		const serverUrl = new URL(serverUrlString);
 		const wsProtocol = serverUrl.protocol === "https:" ? "wss" : "ws";
-		const wsUrl = `${wsProtocol}://${serverUrl.hostname}:3002?roomId=${roomId}&userId=${session.user.id}&username=${encodeURIComponent(session.user.username || "Anonymous")}`;
+		const wsUrl = `${wsProtocol}://${serverUrl.host}/ws?roomId=${roomId}&userId=${session.user.id}&username=${encodeURIComponent(session.user.username || "Anonymous")}`;
 
 		console.log("WebSocket Effect: Attempting to connect to", wsUrl);
 		const ws = new WebSocket(wsUrl);
@@ -272,6 +309,7 @@ function RouteComponent() {
 			console.log("WebSocket connected");
 			if (wsRef.current === ws) {
 				setIsConnected(true);
+				toast.success("Connected to room server.");
 			}
 		};
 
@@ -295,31 +333,14 @@ function RouteComponent() {
 						break;
 					case "room_state": {
 						const processedMembers: RoomMemberInfo[] = data.members.map(
-							(member) => {
-								let joinedAtDate: Date | undefined = undefined;
-								if (member.joinedAt) {
-									if (typeof member.joinedAt === "string") {
-										const parsedDate = new Date(member.joinedAt);
-										if (!Number.isNaN(parsedDate.getTime())) {
-											joinedAtDate = parsedDate;
-										} else {
-											console.warn(
-												`Could not parse joinedAt date string from WS: ${member.joinedAt}`,
-											);
-										}
-									} else if (member.joinedAt instanceof Date) {
-										joinedAtDate = member.joinedAt;
-									}
-								}
-								return {
-									...member,
-									joinedAt: joinedAtDate,
-								};
-							},
+							(member) => ({
+								...member,
+								joinedAt: member.joinedAt
+									? new Date(member.joinedAt)
+									: undefined,
+							}),
 						);
-
 						setMembers(processedMembers);
-
 						queryClient.setQueryData<RoomData[] | undefined>(
 							trpc.getRooms.queryKey(),
 							(oldData): RoomData[] | undefined => {
@@ -333,18 +354,30 @@ function RouteComponent() {
 					}
 					case "room_closed":
 						toast.info("The room has been closed by the owner.");
+						if (wsRef.current === ws) {
+							wsRef.current.close(1000, "Room closed by owner");
+						}
 						navigate({ to: "/" });
 						break;
 					case "game_state":
-						console.log("Game State Received:", data.gameState);
+						console.log("Game State Update Received:", data.gameState);
 						setGameState(data.gameState);
-						setBetAmount(0);
+						if (
+							data.gameState.phase !== gameState?.phase ||
+							data.gameState.currentPlayerSeat !== gameState?.currentPlayerSeat
+						) {
+							setBetAmount(0);
+						}
+						break;
+					case "error":
+						toast.error(`Server error: ${data.message}`);
 						break;
 					default:
 						console.warn("Received unknown WebSocket message type:", data);
 				}
 			} catch (error) {
 				console.error("Failed to parse WebSocket message:", error);
+				toast.error("Received invalid data from server.");
 			}
 		};
 
@@ -359,6 +392,7 @@ function RouteComponent() {
 					"Client navigating away",
 					"Reconnecting or dependencies changed",
 					"Prerequisites not met",
+					"New connection established",
 				];
 				if (
 					event.code !== 1000 &&
@@ -366,7 +400,13 @@ function RouteComponent() {
 					event.code !== 1005 &&
 					!expectedReasons.includes(event.reason)
 				) {
-					toast.error(`Chat connection lost unexpectedly (${event.code}).`);
+					toast.error(
+						`Connection lost unexpectedly (Code: ${event.code}). Attempting to reconnect...`,
+					);
+				} else if (event.reason && !expectedReasons.includes(event.reason)) {
+					toast.info(`Disconnected: ${event.reason}`);
+				} else if (event.code !== 1000) {
+					toast.info(`Disconnected (Code: ${event.code})`);
 				}
 			} else {
 				console.log(
@@ -379,9 +419,6 @@ function RouteComponent() {
 			console.error("WebSocket error:", error);
 			if (wsRef.current === ws) {
 				toast.error("WebSocket connection error.");
-				if (ws.readyState < WebSocket.CLOSING) {
-					ws.close(1011, "WebSocket error occurred");
-				}
 			}
 		};
 
@@ -403,9 +440,20 @@ function RouteComponent() {
 					"WebSocket Effect: Clearing ref in cleanup as it matched closing ws.",
 				);
 				wsRef.current = null;
+				setIsConnected(false);
 			}
 		};
-	}, [roomId, session, initialRoomData, navigate, queryClient]);
+	}, [
+		roomId,
+		session,
+		initialRoomData,
+		navigate,
+		queryClient,
+		isSessionPending,
+		isRoomLoading,
+		gameState?.currentPlayerSeat,
+		gameState?.phase,
+	]);
 
 	useEffect(() => {
 		if (initialRoomData?.members) {

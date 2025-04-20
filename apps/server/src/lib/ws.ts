@@ -1,6 +1,6 @@
+import type { ServerWebSocket } from "bun";
 import { nanoid } from "nanoid";
-import { WebSocket } from "ws";
-import type { Card, GameState, PlayerState } from "./poker";
+import type { GameState, PlayerState } from "./poker";
 import { performAction } from "./poker";
 import {
 	getAllRoomMembers,
@@ -43,12 +43,18 @@ interface GameStateUpdate {
 	gameState: ClientGameState;
 }
 
+interface ErrorMessage {
+	type: "error";
+	message: string;
+}
+
 type ServerWebSocketMessage =
 	| ChatMessage
 	| MessageHistory
 	| RoomStateUpdate
 	| RoomClosed
-	| GameStateUpdate;
+	| GameStateUpdate
+	| ErrorMessage;
 
 interface ClientChatMessage {
 	type: "chat";
@@ -87,20 +93,21 @@ type ClientPokerAction =
 
 type ClientWebSocketMessage = ClientChatMessage | ClientPokerAction;
 
-const rooms = new Map<string, Map<string, WebSocket>>();
+const rooms = new Map<string, Map<string, ServerWebSocket>>();
 const MAX_MESSAGE_LENGTH = 32;
 
 function broadcast(roomId: string, message: ServerWebSocketMessage) {
 	const roomConnections = rooms.get(roomId);
 	if (!roomConnections) return;
 
+	const messageString = JSON.stringify(message);
+
 	for (const [userId, client] of roomConnections) {
-		if (client.readyState === WebSocket.OPEN) {
-			let messageToSend = message;
+		if (client.readyState === 1) {
+			let messageToSendString = messageString;
 
 			if (message.type === "game_state") {
 				const gameStateWithoutDeck = message.gameState;
-
 				const maskedPlayerStates: Record<string, PlayerState> = {};
 				for (const pId in gameStateWithoutDeck.playerStates) {
 					const playerState = gameStateWithoutDeck.playerStates[pId];
@@ -110,7 +117,6 @@ function broadcast(roomId: string, message: ServerWebSocketMessage) {
 						maskedPlayerStates[pId] = { ...playerState, hand: [] };
 					}
 				}
-
 				const maskedGameStateUpdate: GameStateUpdate = {
 					type: "game_state",
 					gameState: {
@@ -118,13 +124,21 @@ function broadcast(roomId: string, message: ServerWebSocketMessage) {
 						playerStates: maskedPlayerStates,
 					},
 				};
-				messageToSend = maskedGameStateUpdate;
+				messageToSendString = JSON.stringify(maskedGameStateUpdate);
 			}
 
-			client.send(JSON.stringify(messageToSend));
+			try {
+				client.send(messageToSendString);
+			} catch (error) {
+				console.error(
+					`Failed to send message to user ${userId} in room ${roomId}:`,
+					error,
+				);
+			}
 		} else {
+			// Handle cleanup for non-open sockets
 			console.warn(
-				`Removing stale WebSocket connection for user ${userId} in room ${roomId}`,
+				`Removing non-open WebSocket connection for user ${userId} in room ${roomId}. State: ${client.readyState}`,
 			);
 			roomConnections.delete(userId);
 
@@ -135,6 +149,9 @@ function broadcast(roomId: string, message: ServerWebSocketMessage) {
 			]).catch(console.error);
 
 			if (roomConnections.size === 0) {
+				console.log(
+					`Room ${roomId} is now empty after cleanup. Removing from active rooms map.`,
+				);
 				rooms.delete(roomId);
 			}
 		}
@@ -169,204 +186,276 @@ export function broadcastRoomClosed(roomId: string) {
 	broadcast(roomId, { type: "room_closed" });
 	const roomConnections = rooms.get(roomId);
 	if (roomConnections) {
-		for (const [, ws] of roomConnections) {
-			ws.close(1000, "Room closed by owner");
+		console.log(`Closing all connections for room ${roomId} due to closure.`);
+		for (const [userId, ws] of roomConnections) {
+			try {
+				if (ws.readyState === 1) {
+					ws.close(1000, "Room closed by owner");
+				}
+			} catch (error) {
+				console.error(
+					`Error closing WebSocket for user ${userId} in room ${roomId}:`,
+					error,
+				);
+			}
 		}
 		rooms.delete(roomId);
 	}
 }
 
-export async function handleWebSocket(
-	ws: WebSocket,
+export function handleWebSocket(
 	roomId: string,
 	userId: string,
 	username: string,
 ) {
-	let roomConnections = rooms.get(roomId);
-	if (!roomConnections) {
-		roomConnections = new Map<string, WebSocket>();
-		rooms.set(roomId, roomConnections);
-	}
-
-	if (roomConnections.has(userId)) {
-		console.warn(
-			`User ${userId} already connected to room ${roomId}. Closing previous connection.`,
-		);
-		roomConnections.get(userId)?.close(1011, "New connection established");
-	}
-
-	roomConnections.set(userId, ws);
-	console.log(
-		`User ${userId} (${username}) connected to room ${roomId}. Total users: ${roomConnections.size}`,
-	);
-
-	await updateRoomMemberActiveStatus(roomId, userId, true);
-
-	try {
-		const members = await getAllRoomMembers(roomId);
-		ws.send(JSON.stringify({ type: "room_state", members }));
-	} catch (error) {
-		console.error(
-			`Failed to send initial room state to ${userId} in room ${roomId}:`,
-			error,
-		);
-	}
-
-	try {
-		const gameState = await getGameState(roomId);
-		if (gameState) {
-			const { deck, ...gameStateWithoutDeck } = gameState;
-
-			const maskedPlayerStates: Record<string, PlayerState> = {};
-			for (const pId in gameStateWithoutDeck.playerStates) {
-				const playerState = gameStateWithoutDeck.playerStates[pId];
-				if (pId === userId) {
-					maskedPlayerStates[pId] = playerState;
-				} else {
-					maskedPlayerStates[pId] = { ...playerState, hand: [] };
-				}
+	return {
+		async onOpen(_event: Event, ws: ServerWebSocket) {
+			if (!roomId || !userId || !username) {
+				console.error(
+					"WebSocket opened but missing required parameters. Closing.",
+				);
+				ws.close(1008, "Missing required parameters");
+				return;
 			}
 
-			const userSpecificGameStateUpdate: GameStateUpdate = {
-				type: "game_state",
-				gameState: {
-					...gameStateWithoutDeck,
-					playerStates: maskedPlayerStates,
-				},
-			};
-			ws.send(JSON.stringify(userSpecificGameStateUpdate));
-		}
-	} catch (error) {
-		console.error(
-			`Failed to send initial game state to ${userId} in room ${roomId}:`,
-			error,
-		);
-	}
+			console.log(
+				`WebSocket connection opened for user ${userId} (${username}) in room ${roomId}`,
+			);
 
-	await broadcastRoomState(roomId);
+			let roomConnections = rooms.get(roomId);
+			if (!roomConnections) {
+				roomConnections = new Map<string, ServerWebSocket>();
+				rooms.set(roomId, roomConnections);
+			}
 
-	ws.on("message", async (data) => {
-		try {
-			const payload: ClientWebSocketMessage = JSON.parse(data.toString());
-
-			if (payload.type === "chat") {
-				let messageContent = payload.message.trim();
-				if (messageContent.length > MAX_MESSAGE_LENGTH) {
-					messageContent = messageContent.substring(0, MAX_MESSAGE_LENGTH);
-				}
-
-				if (!messageContent) {
-					return;
-				}
-
-				const message: ChatMessage = {
-					type: "chat",
-					id: nanoid(),
-					roomId,
-					userId,
-					username,
-					message: messageContent,
-					timestamp: Date.now(),
-				};
-
-				await storeMessage(message);
-				broadcast(roomId, message);
-			} else if (payload.type === "action") {
-				const currentGameState = await getGameState(roomId);
-				if (!currentGameState) {
-					console.error(
-						`Received action for room ${roomId} but no game state found.`,
-					);
-					return;
-				}
-
+			if (roomConnections.has(userId)) {
+				console.warn(
+					`User ${userId} already connected to room ${roomId}. Closing previous connection.`,
+				);
+				const oldWs = roomConnections.get(userId);
 				try {
-					const updatedGameState = await performAction(
-						currentGameState,
-						userId,
-						payload,
-					);
-
-					await setGameState(roomId, updatedGameState);
-					await broadcastGameState(roomId);
-
-					if (updatedGameState.phase === "end_hand") {
-						console.log(`Hand ended in room ${roomId}.`);
+					if (oldWs && oldWs.readyState === 1) {
+						oldWs.close(1011, "New connection established");
 					}
-				} catch (error: unknown) {
-					let errorMessage =
-						"An unknown error occurred while performing the action.";
-					if (error instanceof Error) {
-						errorMessage = error.message;
-					} else if (typeof error === "string") {
-						errorMessage = error;
-					}
+				} catch (error) {
 					console.error(
-						`Error performing action for user ${userId} in room ${roomId}:`,
-						errorMessage,
+						`Error closing old WebSocket for user ${userId} in room ${roomId}:`,
 						error,
 					);
-					ws.send(JSON.stringify({ type: "error", message: errorMessage }));
 				}
 			}
-		} catch (error: unknown) {
+
+			roomConnections.set(userId, ws);
+			console.log(
+				`User ${userId} (${username}) connection stored for room ${roomId}. Total users: ${roomConnections.size}`,
+			);
+
+			try {
+				await updateRoomMemberActiveStatus(roomId, userId, true);
+
+				const members = await getAllRoomMembers(roomId);
+				if (ws.readyState === 1) {
+					ws.send(JSON.stringify({ type: "room_state", members }));
+				}
+
+				const gameState = await getGameState(roomId);
+				if (gameState && ws.readyState === 1) {
+					const { deck, ...gameStateWithoutDeck } = gameState;
+					const maskedPlayerStates: Record<string, PlayerState> = {};
+					for (const pId in gameStateWithoutDeck.playerStates) {
+						const playerState = gameStateWithoutDeck.playerStates[pId];
+						maskedPlayerStates[pId] =
+							pId === userId ? playerState : { ...playerState, hand: [] };
+					}
+					const userSpecificGameStateUpdate: GameStateUpdate = {
+						type: "game_state",
+						gameState: {
+							...gameStateWithoutDeck,
+							playerStates: maskedPlayerStates,
+						},
+					};
+					ws.send(JSON.stringify(userSpecificGameStateUpdate));
+				}
+
+				await broadcastRoomState(roomId);
+			} catch (error) {
+				console.error(
+					`Error during WebSocket onOpen for user ${userId} in room ${roomId}:`,
+					error,
+				);
+			}
+		},
+
+		async onMessage(event: MessageEvent, ws: ServerWebSocket) {
+			try {
+				const payload: ClientWebSocketMessage = JSON.parse(
+					event.data.toString(),
+				);
+				console.log(
+					`Received message from ${userId} in room ${roomId}:`,
+					payload,
+				);
+
+				if (payload.type === "chat") {
+					let messageContent = payload.message.trim();
+					if (messageContent.length > MAX_MESSAGE_LENGTH) {
+						messageContent = messageContent.substring(0, MAX_MESSAGE_LENGTH);
+					}
+					if (!messageContent) return;
+
+					const message: ChatMessage = {
+						type: "chat",
+						id: nanoid(),
+						roomId,
+						userId,
+						username,
+						message: messageContent,
+						timestamp: Date.now(),
+					};
+
+					await storeMessage(message);
+					broadcast(roomId, message);
+				} else if (payload.type === "action") {
+					const currentGameState = await getGameState(roomId);
+					if (!currentGameState) {
+						console.error(
+							`Received action from ${userId} for room ${roomId} but no game state found.`,
+						);
+						if (ws.readyState === 1) {
+							ws.send(
+								JSON.stringify({
+									type: "error",
+									message: "Game not found or not started.",
+								}),
+							);
+						}
+						return;
+					}
+
+					try {
+						const updatedGameState = await performAction(
+							currentGameState,
+							userId,
+							payload,
+						);
+
+						await setGameState(roomId, updatedGameState);
+						await broadcastGameState(roomId);
+
+						if (updatedGameState.phase === "end_hand") {
+							console.log(`Hand ended in room ${roomId}.`);
+						}
+					} catch (error: unknown) {
+						let errorMessage =
+							"An unknown error occurred while performing the action.";
+						if (error instanceof Error) {
+							errorMessage = error.message;
+						} else if (typeof error === "string") {
+							errorMessage = error;
+						}
+						console.error(
+							`Error performing action for user ${userId} in room ${roomId}:`,
+							errorMessage,
+							error,
+						);
+
+						if (ws.readyState === 1) {
+							ws.send(JSON.stringify({ type: "error", message: errorMessage }));
+						}
+					}
+				}
+			} catch (error: unknown) {
+				console.error(
+					`Failed to handle WebSocket message from ${userId} in room ${roomId}:`,
+					error,
+				);
+				if (ws.readyState === 1) {
+					ws.send(
+						JSON.stringify({
+							type: "error",
+							message: "Invalid message format or server error.",
+						}),
+					);
+				}
+			}
+		},
+
+		async onClose(event: CloseEvent, _ws: ServerWebSocket) {
+			console.log(
+				`WebSocket connection closed for user ${userId} in room ${roomId}. Code: ${event.code}, Reason: ${event.reason}`,
+			);
+
+			const roomConnections = rooms.get(roomId);
+			if (roomConnections) {
+				if (roomConnections.get(userId) === _ws) {
+					roomConnections.delete(userId);
+					console.log(
+						`Removed user ${userId} connection from room ${roomId}. Remaining: ${roomConnections.size}`,
+					);
+
+					Promise.allSettled([
+						updateRoomMemberActiveStatus(roomId, userId, false),
+						broadcastRoomState(roomId),
+						broadcastGameState(roomId),
+					]).catch(console.error);
+
+					if (roomConnections.size === 0) {
+						console.log(
+							`Room ${roomId} is now empty after onClose. Removing from active rooms map.`,
+						);
+						rooms.delete(roomId);
+					}
+				} else {
+					console.log(
+						`onClose called for user ${userId}, but the stored WebSocket instance did not match. No cleanup performed for this event.`,
+					);
+				}
+			} else {
+				console.log(
+					`onClose called for user ${userId}, but room ${roomId} was not found in the map.`,
+				);
+			}
+		},
+
+		onError(error: Error, ws: ServerWebSocket) {
 			console.error(
-				`Failed to handle WebSocket message from ${userId} in room ${roomId}:`,
+				`WebSocket error for user ${userId} in room ${roomId}:`,
 				error,
 			);
-			ws.send(
-				JSON.stringify({ type: "error", message: "Invalid message format." }),
-			);
-		}
-	});
 
-	ws.on("close", async (code, reason) => {
-		console.log(
-			`User ${userId} disconnected from room ${roomId}. Code: ${code}, Reason: ${reason?.toString()}`,
-		);
-		roomConnections.delete(userId);
-
-		Promise.allSettled([
-			updateRoomMemberActiveStatus(roomId, userId, false),
-			broadcastRoomState(roomId),
-			broadcastGameState(roomId),
-		]).catch(console.error);
-
-		if (roomConnections.size === 0) {
-			console.log(
-				`Room ${roomId} is now empty. Removing from active rooms map.`,
-			);
-			rooms.delete(roomId);
-		}
-	});
-
-	ws.on("error", (error) => {
-		console.error(
-			`WebSocket error for user ${userId} in room ${roomId}:`,
-			error,
-		);
-		if (roomConnections.has(userId)) {
-			roomConnections.delete(userId);
-			Promise.allSettled([
-				updateRoomMemberActiveStatus(roomId, userId, false),
-				broadcastRoomState(roomId),
-				broadcastGameState(roomId),
-			]).catch(console.error);
-
-			if (roomConnections.size === 0) {
+			const roomConnections = rooms.get(roomId);
+			if (roomConnections && roomConnections.get(userId) === ws) {
+				roomConnections.delete(userId);
 				console.log(
-					`Room ${roomId} is now empty due to WebSocket error. Removing from active rooms map.`,
+					`Removed user ${userId} connection from room ${roomId} due to error. Remaining: ${roomConnections.size}`,
 				);
-				rooms.delete(roomId);
+
+				Promise.allSettled([
+					updateRoomMemberActiveStatus(roomId, userId, false),
+					broadcastRoomState(roomId),
+					broadcastGameState(roomId),
+				]).catch(console.error);
+
+				if (roomConnections.size === 0) {
+					console.log(
+						`Room ${roomId} is now empty after onError. Removing from active rooms map.`,
+					);
+					rooms.delete(roomId);
+				}
 			}
-		}
-		if (
-			ws.readyState === WebSocket.OPEN ||
-			ws.readyState === WebSocket.CONNECTING
-		) {
-			ws.terminate();
-		}
-	});
+
+			try {
+				if (ws.readyState === 1) {
+					ws.close(1011, "WebSocket error occurred");
+				}
+			} catch (closeError) {
+				console.error(
+					`Error trying to close WebSocket after error for user ${userId}:`,
+					closeError,
+				);
+			}
+		},
+	};
 }
 
 export async function cleanupRoomMessages(roomId: string): Promise<void> {
