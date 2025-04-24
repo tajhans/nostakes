@@ -21,17 +21,17 @@ export function Header() {
 					</Link>
 				</div>
 
-				<div className="flex w-[100px] justify-end">
+				<div className="flex justify-end">
 					<Link to="/account" className="transition-opacity hover:opacity-80">
 						{userImage ? (
 							<img
 								src={userImage}
 								alt={username}
-								className="h-8 w-8 rounded-full"
+								className="h-9 w-9 rounded-full"
 							/>
 						) : (
-							<Button variant="ghost" size="icon" className="h-8 w-8">
-								<User className="h-5 w-5" />
+							<Button variant="ghost" size="icon">
+								<User />
 							</Button>
 						)}
 					</Link>
