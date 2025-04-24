@@ -14,6 +14,7 @@ export const Route = createFileRoute("/")({
 
 function HomeComponent() {
 	const { data: session, isPending } = authClient.useSession();
+	console.log(session);
 	const healthCheck = useQuery(trpc.healthCheck.queryOptions());
 
 	return (
