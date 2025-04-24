@@ -26,10 +26,8 @@ export const auth = betterAuth({
 		expiresIn: 3600,
 	},
 	advanced: {
-		defaultCookieAttributes: {
-			sameSite: "none",
-			secure: true,
-			partitioned: true,
+		crossSubDomainCookies: {
+			enabled: true,
 		},
 	},
 	plugins: [username()],
