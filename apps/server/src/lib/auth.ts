@@ -25,5 +25,12 @@ export const auth = betterAuth({
 		autoSignInAfterVerification: true,
 		expiresIn: 3600,
 	},
+	advanced: {
+		defaultCookieAttributes: {
+			sameSite: "none",
+			secure: true,
+			partitioned: true,
+		},
+	},
 	plugins: [username()],
 });
