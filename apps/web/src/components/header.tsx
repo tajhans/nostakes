@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { Link } from "@tanstack/react-router";
 import { User } from "lucide-react";
+import { ModeToggle } from "./mode-toggle";
 
 export function Header() {
 	const { data: session } = authClient.useSession();
@@ -12,7 +13,7 @@ export function Header() {
 	return (
 		<header className="w-full border-b">
 			<div className="container mx-auto flex h-16 items-center justify-between px-4">
-				<div className="w-[100px]" />
+				<ModeToggle />
 
 				<div className="font-bold text-xl">
 					<Link to="/" className="transition-opacity hover:opacity-80">
