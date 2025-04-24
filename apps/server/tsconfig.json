@@ -8,7 +8,7 @@
 		"skipLibCheck": true,
 		"baseUrl": "./",
 		"outDir": "./dist",
-		"types": ["node", "bun"],
+		//		"types": ["node", "bun"],
 		"jsx": "react-jsx",
 		"jsxImportSource": "hono/jsx"
 	},
