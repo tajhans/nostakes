@@ -16,6 +16,8 @@ const { upgradeWebSocket, websocket } = createBunWebSocket<ServerWebSocket>();
 
 app.use(logger());
 
+console.log(process.env.CORS_ORIGIN);
+
 app.use(
 	"/*",
 	cors({
