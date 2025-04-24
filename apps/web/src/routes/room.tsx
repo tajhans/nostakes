@@ -160,6 +160,62 @@ interface RoomData {
 	members: RoomMemberInfo[];
 }
 
+interface CardComponentProps {
+	rank: Rank;
+	suit: Suit;
+	size?: "sm" | "md" | "lg";
+}
+
+const CardComponent: React.FC<CardComponentProps> = ({
+	rank,
+	suit,
+	size = "md",
+}) => {
+	const cardCode = `${rank}${suit}`;
+	const imageUrl = `https://image.nostakes.poker/cards/${cardCode}.svg`;
+
+	const sizeClasses = {
+		sm: "h-8 w-auto",
+		md: "h-12 w-auto",
+		lg: "h-28 w-auto",
+	};
+
+	const suitNameMap: Record<Suit, string> = {
+		C: "Clubs",
+		D: "Diamonds",
+		H: "Hearts",
+		S: "Spades",
+	};
+
+	const rankNameMap: Record<Rank, string> = {
+		"2": "2",
+		"3": "3",
+		"4": "4",
+		"5": "5",
+		"6": "6",
+		"7": "7",
+		"8": "8",
+		"9": "9",
+		T: "10",
+		J: "Jack",
+		Q: "Queen",
+		K: "King",
+		A: "Ace",
+	};
+
+	const altText = `${rankNameMap[rank]} of ${suitNameMap[suit]}`;
+
+	return (
+		<img
+			src={imageUrl}
+			alt={altText}
+			className={`inline-block select-none ${sizeClasses[size]}`}
+			loading="eager"
+			draggable="false"
+		/>
+	);
+};
+
 export const Route = createFileRoute("/room")({
 	validateSearch: (search) => ({
 		id: search.id as string,
@@ -909,13 +965,16 @@ function RouteComponent() {
 															playerState?.hand &&
 															playerState.hand.length > 0 &&
 															!playerState.isFolded && (
-																<span className="font-mono text-xs">
-																	[
-																	{playerState.hand
-																		.map((c) => c.rank + c.suit)
-																		.join(" ")}
-																	]
-																</span>
+																<div className="ml-1 flex items-center gap-1">
+																	{playerState.hand.map((c, index) => (
+																		<CardComponent
+																			key={`${c.rank}${c.suit}-${index}`}
+																			rank={c.rank}
+																			suit={c.suit}
+																			size="lg"
+																		/>
+																	))}
+																</div>
 															)}
 														{(playerState?.currentBet ?? 0) > 0 && (
 															<span className="rounded bg-primary/20 px-1.5 py-0.5 font-mono text-xs">
@@ -954,13 +1013,12 @@ function RouteComponent() {
 										<div className="flex min-h-[36px] flex-wrap items-center justify-center gap-2 font-mono text-lg">
 											{gameState.communityCards.length > 0 ? (
 												gameState.communityCards.map((card, index) => (
-													<span
+													<CardComponent
 														key={`${card.rank}${card.suit}-${index}`}
-														className="rounded border bg-card px-2 py-1 shadow-sm"
-													>
-														{card.rank}
-														{card.suit}
-													</span>
+														rank={card.rank}
+														suit={card.suit}
+														size="lg"
+													/>
 												))
 											) : (
 												<span className="text-muted-foreground text-sm">
