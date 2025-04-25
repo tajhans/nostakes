@@ -77,6 +77,13 @@ export const appRouter = router({
 	createRoom: protectedProcedure
 		.input(createRoomSchema)
 		.mutation(async ({ input, ctx }) => {
+			if (!ctx.session.user.emailVerified) {
+				throw new TRPCError({
+					code: "FORBIDDEN",
+					message: "Please verify your email address before creating a room.",
+				});
+			}
+
 			if (input.bigBlind <= input.smallBlind) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -171,6 +178,13 @@ export const appRouter = router({
 	joinRoom: protectedProcedure
 		.input(joinRoomSchema)
 		.mutation(async ({ input, ctx }) => {
+			if (!ctx.session.user.emailVerified) {
+				throw new TRPCError({
+					code: "FORBIDDEN",
+					message: "Please verify your email address before joining a room.",
+				});
+			}
+
 			const [targetRoom] = await db
 				.select()
 				.from(room)
