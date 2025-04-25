@@ -237,6 +237,7 @@ function RouteComponent() {
 	const wsRef = useRef<WebSocket | null>(null);
 	const [betAmount, setBetAmount] = useState<number>(0);
 	const [isCopied, setIsCopied] = useState(false);
+	const hasShownInitialConnectToast = useRef(false);
 
 	const { data: initialRoomData, isLoading: isRoomLoading } = useQuery({
 		...trpc.getRooms.queryOptions(),
@@ -365,7 +366,11 @@ function RouteComponent() {
 			console.log("WebSocket connected");
 			if (wsRef.current === ws) {
 				setIsConnected(true);
-				toast.success("Connected to room server.");
+
+				if (!hasShownInitialConnectToast.current) {
+					toast.success("Connected to room server.");
+					hasShownInitialConnectToast.current = true;
+				}
 			}
 		};
 
@@ -459,6 +464,8 @@ function RouteComponent() {
 					toast.error(
 						`Connection lost unexpectedly (Code: ${event.code}). Attempting to reconnect...`,
 					);
+
+					hasShownInitialConnectToast.current = false;
 				} else if (event.reason && !expectedReasons.includes(event.reason)) {
 					toast.info(`Disconnected: ${event.reason}`);
 				} else if (event.code !== 1000) {
