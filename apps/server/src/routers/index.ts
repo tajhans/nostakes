@@ -519,6 +519,7 @@ export const appRouter = router({
 			}
 
 			const previousGameState = await getGameState(roomId);
+
 			if (
 				previousGameState &&
 				previousGameState.phase !== "waiting" &&
@@ -530,29 +531,18 @@ export const appRouter = router({
 				});
 			}
 
-			if (previousGameState?.phase === "end_hand") {
-				let membersUpdated = false;
-				for (const userId in previousGameState.playerStates) {
-					const playerState = previousGameState.playerStates[userId];
-					const memberInfo = activeMembers.find((m) => m.userId === userId);
-					if (
-						memberInfo?.isActive &&
-						memberInfo.currentStack !== playerState.stack
-					) {
-						memberInfo.currentStack = playerState.stack;
-						await setRoomMember(roomId, memberInfo);
-						membersUpdated = true;
-					}
-				}
-				if (membersUpdated) {
-					activeMembers.length = 0;
-					activeMembers.push(
-						...(await getAllRoomMembers(roomId)).filter((m) => m.isActive),
-					);
-				}
-			}
-
 			try {
+				const participatingMembers = activeMembers.filter(
+					(m) => m.wantsToPlayNextHand === true,
+				);
+
+				if (participatingMembers.length < 2) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: `Need at least 2 players ready for the next hand. Found ${participatingMembers.length}.`,
+					});
+				}
+
 				const newGameState = await startNewHand(
 					roomId,
 					{
@@ -580,7 +570,7 @@ export const appRouter = router({
 					errorMessage = `Failed to start game: ${error}`;
 				}
 				console.error("Error starting game:", error);
-				await broadcastRoomState(roomId);
+
 				throw new TRPCError({
 					code: "INTERNAL_SERVER_ERROR",
 					message: errorMessage,

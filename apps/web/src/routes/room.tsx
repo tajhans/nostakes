@@ -693,6 +693,34 @@ function RouteComponent() {
 	const room = initialRoomData;
 	const activeMembers = members.filter((m) => m.isActive);
 	const isAdmin = session.user.id === room.ownerId;
+
+	const readyPlayerCount = activeMembers.filter(
+		(m) => m.wantsToPlayNextHand === true,
+	).length;
+
+	const canStartGame =
+		isAdmin &&
+		room.isActive &&
+		isConnected &&
+		(!gameState ||
+			gameState.phase === "waiting" ||
+			gameState.phase === "end_hand") &&
+		readyPlayerCount >= 2;
+
+	const startGameButtonTitle = !isAdmin
+		? "Only the admin can start the game"
+		: !room.isActive
+			? "Room is closed"
+			: !isConnected
+				? "Not connected to server"
+				: gameState &&
+						gameState.phase !== "waiting" &&
+						gameState.phase !== "end_hand"
+					? "Game is already in progress"
+					: readyPlayerCount < 2
+						? `Need at least 2 players ready (${readyPlayerCount} ready)`
+						: "Start the next hand";
+
 	const currentPlayerState = gameState?.playerStates[session.user.id];
 	const isMyTurn =
 		!!currentPlayerState &&
@@ -824,31 +852,36 @@ function RouteComponent() {
 										{closeRoom.isPending ? "Closing..." : "Close Room"}
 									</Button>
 								)}
-								{isAdmin &&
-									room.isActive &&
-									(!gameState ||
-										gameState.phase === "waiting" ||
-										gameState.phase === "end_hand") && (
-										<Button
-											variant="default"
-											size="sm"
-											onClick={() => startGame.mutate(roomId)}
-											disabled={
-												startGame.isPending ||
-												!isConnected ||
-												activeMembers.filter((m) => m.wantsToPlayNextHand)
-													.length < 2
-											}
-											title={
-												activeMembers.filter((m) => m.wantsToPlayNextHand)
-													.length < 2
-													? "Need at least 2 players ready for the next hand"
-													: "Start the next hand"
-											}
-										>
-											{startGame.isPending ? "Starting..." : "Start Game"}
-										</Button>
-									)}
+								{isAdmin && room.isActive && (
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<span
+												tabIndex={canStartGame ? -1 : 0}
+												className={!canStartGame ? "cursor-not-allowed" : ""}
+											>
+												<Button
+													variant="default"
+													size="sm"
+													onClick={() => {
+														if (canStartGame) {
+															startGame.mutate(roomId);
+														}
+													}}
+													disabled={!canStartGame || startGame.isPending}
+													aria-disabled={!canStartGame || startGame.isPending}
+													className={!canStartGame ? "pointer-events-none" : ""}
+												>
+													{startGame.isPending ? "Starting..." : "Start Game"}
+												</Button>
+											</span>
+										</TooltipTrigger>
+										{!startGame.isPending && (
+											<TooltipContent>
+												<p>{startGameButtonTitle}</p>
+											</TooltipContent>
+										)}
+									</Tooltip>
+								)}
 								{!isAdmin && currentUserMemberInfo?.isActive && (
 									<Button
 										variant="outline"
