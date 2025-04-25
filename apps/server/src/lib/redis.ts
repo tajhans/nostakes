@@ -260,3 +260,29 @@ export async function deleteGameState(roomId: string): Promise<void> {
 		console.error(`Failed to delete game state for room ${roomId}:`, error);
 	}
 }
+
+export async function cleanupAllRoomKeys(roomId: string): Promise<void> {
+	try {
+		const keys = [
+			`${ROOM_GAME_STATE_KEY_PREFIX}:${roomId}`,
+			`${ROOM_MEMBERS_KEY_PREFIX}:${roomId}`,
+			`room:${roomId}:messages`,
+		];
+
+		console.log(`Cleaning up all Redis keys for room ${roomId}:`, keys);
+
+		const results = await Promise.allSettled(keys.map((key) => redis.del(key)));
+		results.forEach((result, index) => {
+			if (result.status === "rejected") {
+				console.error(`Failed to delete key ${keys[index]}:`, result.reason);
+			} else {
+				console.log(
+					`Successfully deleted key ${keys[index]}: ${result.value} keys removed`,
+				);
+			}
+		});
+	} catch (error) {
+		console.error(`Failed to cleanup Redis keys for room ${roomId}:`, error);
+		throw error;
+	}
+}

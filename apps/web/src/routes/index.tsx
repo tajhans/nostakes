@@ -15,6 +15,9 @@ export const Route = createFileRoute("/")({
 function HomeComponent() {
 	const { data: session, isPending } = authClient.useSession();
 	const healthCheck = useQuery(trpc.healthCheck.queryOptions());
+	const { data: activeRoom, isLoading: isRoomLoading } = useQuery(
+		trpc.getActiveRoom.queryOptions(),
+	);
 
 	return (
 		<div className="container mx-auto max-w-3xl px-4 py-2">
@@ -36,6 +39,7 @@ function HomeComponent() {
 						</span>
 					</div>
 				</section>
+
 				<div className="flex justify-center gap-4">
 					{isPending ? (
 						<span className="text-muted-foreground text-sm">Loading...</span>
@@ -63,6 +67,27 @@ function HomeComponent() {
 						</Link>
 					)}
 				</div>
+
+				{isRoomLoading ? (
+					<div className="rounded-lg border p-4">
+						<span className="text-muted-foreground">
+							Loading room status...
+						</span>
+					</div>
+				) : activeRoom != null ? (
+					<div className="rounded-lg border p-4">
+						<p className="mb-2">You have an active room session</p>
+						<Link to="/room" search={{ id: activeRoom.roomId }}>
+							<Button variant="default">Reconnect to Room</Button>
+						</Link>
+					</div>
+				) : (
+					<div className="rounded-lg border bg-muted p-4">
+						<span className="text-muted-foreground">
+							No active room session
+						</span>
+					</div>
+				)}
 			</div>
 		</div>
 	);

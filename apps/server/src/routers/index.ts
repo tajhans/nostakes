@@ -12,6 +12,7 @@ import {
 	startNewHand,
 } from "../lib/poker";
 import {
+	cleanupAllRoomKeys,
 	cleanupRoomMessages,
 	deleteGameState,
 	deleteRoomMembers,
@@ -62,6 +63,18 @@ const togglePlayStatusSchema = z.object({
 	wantsToPlay: z.boolean(),
 });
 
+async function getUserActiveRoom(userId: string) {
+	const [activeRoom] = await db
+		.select({
+			roomId: roomMember.roomId,
+		})
+		.from(roomMember)
+		.where(and(eq(roomMember.userId, userId), eq(roomMember.isActive, true)))
+		.limit(1);
+
+	return activeRoom;
+}
+
 export const appRouter = router({
 	healthCheck: publicProcedure.query(() => {
 		return "OK";
@@ -77,6 +90,15 @@ export const appRouter = router({
 	createRoom: protectedProcedure
 		.input(createRoomSchema)
 		.mutation(async ({ input, ctx }) => {
+			const activeRoom = await getUserActiveRoom(ctx.session.user.id);
+			if (activeRoom) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message:
+						"You are already in an active room. Please leave your current room first.",
+				});
+			}
+
 			if (!ctx.session.user.emailVerified) {
 				throw new TRPCError({
 					code: "FORBIDDEN",
@@ -165,6 +187,7 @@ export const appRouter = router({
 			broadcastRoomClosed(input.roomId);
 
 			await Promise.all([
+				cleanupAllRoomKeys(input.roomId),
 				cleanupRoomMessages(input.roomId),
 				deleteRoomMembers(input.roomId),
 				deleteGameState(input.roomId),
@@ -178,6 +201,15 @@ export const appRouter = router({
 	joinRoom: protectedProcedure
 		.input(joinRoomSchema)
 		.mutation(async ({ input, ctx }) => {
+			const activeRoom = await getUserActiveRoom(ctx.session.user.id);
+			if (activeRoom) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message:
+						"You are already in an active room. Please leave your current room first.",
+				});
+			}
+
 			if (!ctx.session.user.emailVerified) {
 				throw new TRPCError({
 					code: "FORBIDDEN",
@@ -623,6 +655,11 @@ export const appRouter = router({
 
 			return { success: true };
 		}),
+
+	getActiveRoom: protectedProcedure.query(async ({ ctx }) => {
+		const room = await getUserActiveRoom(ctx.session.user.id);
+		return room ?? null;
+	}),
 });
 
 export type AppRouter = typeof appRouter;
