@@ -158,6 +158,7 @@ interface RoomData {
 	isActive: boolean;
 	ownerId: string;
 	members: RoomMemberInfo[];
+	filterProfanity: boolean;
 }
 
 interface CardComponentProps {
@@ -1210,6 +1211,7 @@ function RouteComponent() {
 						sendMessage={sendChatMessage}
 						isConnected={isConnected}
 						currentUserId={session.user.id}
+						filterProfanity={initialRoomData.filterProfanity}
 					/>
 				</div>
 			</div>

@@ -1,7 +1,10 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Filter } from "bad-words";
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 
 interface ChatMessage {
 	id: string;
@@ -18,6 +21,7 @@ interface RoomChatProps {
 	sendMessage: (message: string) => void;
 	isConnected: boolean;
 	currentUserId: string;
+	filterProfanity?: boolean;
 }
 
 interface GroupedMessage extends ChatMessage {
@@ -32,15 +36,23 @@ export function RoomChat({
 	sendMessage: sendChatMessageProp,
 	isConnected,
 	currentUserId,
+	filterProfanity = false,
 }: RoomChatProps) {
 	const [messageInput, setMessageInput] = useState("");
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
+	const filter = useRef(new Filter());
 
-	const handleSend = () => {
+	const handleSend = async () => {
 		const trimmedMessage = messageInput.trim();
 		if (!trimmedMessage) return;
 
-		sendChatMessageProp(trimmedMessage.substring(0, MAX_MESSAGE_LENGTH));
+		const messageToSend = trimmedMessage.substring(0, MAX_MESSAGE_LENGTH);
+
+		const finalMessage = filterProfanity
+			? filter.current.clean(messageToSend)
+			: messageToSend;
+
+		sendChatMessageProp(finalMessage);
 		setMessageInput("");
 	};
 
@@ -62,11 +74,14 @@ export function RoomChat({
 
 	return (
 		<div className="flex h-full flex-col rounded-lg border p-4">
-			<h2 className="mb-2 font-medium">Chat</h2>
+			<div className="mb-2 flex items-center gap-2">
+				<h2 className="font-medium">Chat</h2>
+				<Badge variant="secondary" className="text-sm">
+					{filterProfanity ? "Profanity Filter On" : "Unfiltered"}
+				</Badge>
+			</div>
 			<ScrollArea ref={scrollAreaRef} className="flex-grow" type="always">
 				<div className="space-y-1 pr-4 pb-4">
-					{" "}
-					{/* Added pr-4 for scrollbar */}
 					{groupedMessages.map((msg) => (
 						<div
 							key={msg.id}

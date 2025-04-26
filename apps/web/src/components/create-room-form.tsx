@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { trpcClient } from "@/utils/trpc";
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
@@ -33,6 +34,7 @@ const createRoomSchema = z.object({
 		.number({ message: "Must be a number" })
 		.positive("Big blind must be positive")
 		.default(5),
+	filterProfanity: z.boolean().default(false),
 });
 
 type CreateRoomFormData = z.infer<typeof createRoomSchema>;
@@ -60,8 +62,10 @@ export default function CreateRoomForm() {
 			smallBlind: 10,
 			bigBlind: 20,
 			ante: 5,
+			filterProfanity: false,
 		},
 		onSubmit: async ({ value }) => {
+			console.log(value);
 			await createRoom.mutateAsync(value);
 		},
 	});
@@ -216,6 +220,23 @@ export default function CreateRoomForm() {
 										{field.state.meta.errors.join(", ")}
 									</div>
 								) : null}
+							</div>
+						)}
+					</form.Field>
+					<form.Field name="filterProfanity">
+						{(field) => (
+							<div className="grid grid-cols-4 items-center gap-4">
+								<Label htmlFor={field.name} className="text-right">
+									Filter Profanity
+								</Label>
+								<div className="col-span-3 flex items-center">
+									<Switch
+										id={field.name}
+										name={field.name}
+										checked={field.state.value}
+										onCheckedChange={field.handleChange}
+									/>
+								</div>
 							</div>
 						)}
 					</form.Field>

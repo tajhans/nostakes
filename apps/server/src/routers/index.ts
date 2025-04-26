@@ -40,6 +40,7 @@ const createRoomSchema = z.object({
 	smallBlind: z.number().positive("Small blind must be positive"),
 	bigBlind: z.number().positive("Big blind must be positive"),
 	ante: z.number().min(0, "Ante cannot be negative").default(5),
+	filterProfanity: z.boolean().default(false),
 });
 
 const joinRoomSchema = z.object({
@@ -134,6 +135,7 @@ export const appRouter = router({
 					bigBlind: input.bigBlind,
 					ante: input.ante,
 					ownerId: ctx.session.user.id,
+					filterProfanity: input.filterProfanity,
 				})
 				.returning();
 
@@ -412,6 +414,7 @@ export const appRouter = router({
 				isActive: room.isActive,
 				createdAt: room.createdAt,
 				ownerId: room.ownerId,
+				filterProfanity: room.filterProfanity,
 			})
 			.from(room)
 			.leftJoin(roomMember, eq(roomMember.roomId, room.id))
