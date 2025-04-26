@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Button } from "./ui/button";
 
 export function VerificationNotice() {
-	const [isResending, setIsResending] = useState(false);
+	const [isSending, setIsSending] = useState(false);
 	const { data: session } = authClient.useSession();
 
 	if (!session || session.user.emailVerified) {
@@ -20,23 +20,23 @@ export function VerificationNotice() {
 				variant="outline"
 				size="sm"
 				className="border-yellow-500/20 text-yellow-500 hover:bg-yellow-500/10"
-				disabled={isResending}
+				disabled={isSending}
 				onClick={async () => {
-					setIsResending(true);
+					setIsSending(true);
 					try {
 						await authClient.sendVerificationEmail({
 							email: session?.user.email,
-							callbackURL: "http://100.119.141.108:3001/",
+							callbackURL: import.meta.env.VITE_SERVER_URL,
 						});
 						toast.success("Verification email sent");
 					} catch (error) {
 						toast.error("Failed to send verification email");
 					} finally {
-						setIsResending(false);
+						setIsSending(false);
 					}
 				}}
 			>
-				{isResending ? "Sending..." : "Resend Email"}
+				{isSending ? "Sending..." : "Send Email"}
 			</Button>
 		</div>
 	);

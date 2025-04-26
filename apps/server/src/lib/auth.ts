@@ -21,7 +21,7 @@ export const auth = betterAuth({
 				url,
 			});
 		},
-		sendOnSignUp: true,
+		sendOnSignUp: false,
 		autoSignInAfterVerification: true,
 		expiresIn: 3600,
 	},
