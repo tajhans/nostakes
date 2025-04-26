@@ -26,7 +26,7 @@ export function VerificationNotice() {
 					try {
 						await authClient.sendVerificationEmail({
 							email: session?.user.email,
-							callbackURL: import.meta.env.VITE_SERVER_URL,
+							callbackURL: window.location.origin,
 						});
 						toast.success("Verification email sent");
 					} catch (error) {
