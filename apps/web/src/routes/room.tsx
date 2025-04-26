@@ -1,3 +1,4 @@
+import { HandHistory } from "@/components/hand-history";
 import Loader from "@/components/loader";
 import { RoomChat } from "@/components/room-chat";
 import { Button } from "@/components/ui/button";
@@ -17,8 +18,8 @@ import { Check, Circle, CircleDot, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-type Suit = "C" | "D" | "H" | "S";
-type Rank =
+export type Suit = "C" | "D" | "H" | "S";
+export type Rank =
 	| "2"
 	| "3"
 	| "4"
@@ -38,7 +39,7 @@ interface Card {
 	suit: Suit;
 }
 
-type GamePhase =
+export type GamePhase =
 	| "waiting"
 	| "preflop"
 	| "flop"
@@ -1071,15 +1072,10 @@ function RouteComponent() {
 
 									<p className="font-mono text-xl">Pot: {gameState.pot}</p>
 
-									<div className="max-h-24 overflow-y-auto rounded border bg-muted/50 p-2 text-muted-foreground text-xs">
-										{gameState.handHistory.length > 0 ? (
-											gameState.handHistory
-												.slice(-5)
-												.map((line, i) => <p key={i}>{line}</p>)
-										) : (
-											<p>No actions yet this hand.</p>
-										)}
-									</div>
+									<HandHistory
+										history={gameState.handHistory}
+										currentPhase={gameState.phase}
+									/>
 
 									{isMyTurn && currentPlayerState && (
 										<div className="mt-4 flex flex-wrap items-center justify-center gap-2 border-t pt-4">
