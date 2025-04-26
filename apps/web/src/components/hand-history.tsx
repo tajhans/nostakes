@@ -22,7 +22,7 @@ interface ParsedStage {
 
 const cardRegex = /\b([2-9TJQKA])([CDHS])\b/g;
 
-const suitMap: Record<Suit, { char: string; colorClass?: string }> = {
+export const suitMap: Record<Suit, { char: string; colorClass?: string }> = {
 	C: { char: "♣", colorClass: "text-green-500 dark:text-green-400" },
 	D: { char: "♦", colorClass: "text-blue-500 dark:text-blue-400" },
 	H: { char: "♥", colorClass: "text-red-500 dark:text-red-400" },

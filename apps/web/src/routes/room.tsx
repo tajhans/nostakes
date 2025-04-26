@@ -10,6 +10,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { authClient } from "@/lib/auth-client";
+import { cn } from "@/lib/utils";
 import { trpc } from "@/utils/trpc";
 import { trpcClient } from "@/utils/trpc";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +18,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Check, Circle, CircleDot, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { suitMap } from "../components/hand-history";
 
 export type Suit = "C" | "D" | "H" | "S";
 export type Rank =
@@ -173,6 +175,7 @@ const CardComponent: React.FC<CardComponentProps> = ({
 	suit,
 	size = "md",
 }) => {
+	const [isLoaded, setIsLoaded] = useState(false);
 	const cardCode = `${rank}${suit}`;
 	const imageUrl = `https://image.nostakes.poker/cards/${cardCode}.svg`;
 
@@ -182,39 +185,59 @@ const CardComponent: React.FC<CardComponentProps> = ({
 		lg: "h-28 w-auto",
 	};
 
-	const suitNameMap: Record<Suit, string> = {
-		C: "Clubs",
-		D: "Diamonds",
-		H: "Hearts",
-		S: "Spades",
+	const placeholderSizeClasses = {
+		sm: "h-8 w-[1.5rem] text-xs",
+		md: "h-12 w-[2.25rem] text-sm",
+		lg: "h-28 w-[5.25rem] text-lg",
 	};
 
-	const rankNameMap: Record<Rank, string> = {
-		"2": "2",
-		"3": "3",
-		"4": "4",
-		"5": "5",
-		"6": "6",
-		"7": "7",
-		"8": "8",
-		"9": "9",
-		T: "10",
-		J: "Jack",
-		Q: "Queen",
-		K: "King",
-		A: "Ace",
-	};
+	const suitInfo = suitMap[suit];
+	const altText = `${rank} of ${suitInfo.char}`;
 
-	const altText = `${rankNameMap[rank]} of ${suitNameMap[suit]}`;
+	useEffect(() => {
+		setIsLoaded(false);
+	}, [rank, suit, size]);
 
 	return (
-		<img
-			src={imageUrl}
-			alt={altText}
-			className={`inline-block select-none ${sizeClasses[size]}`}
-			loading="eager"
-			draggable="false"
-		/>
+		<div
+			className={cn(
+				"inline-flex select-none items-center justify-center",
+				sizeClasses[size],
+			)}
+		>
+			{!isLoaded && (
+				<div
+					className={cn(
+						"flex items-center justify-center rounded border bg-card text-card-foreground",
+						placeholderSizeClasses[size],
+					)}
+					aria-label={altText}
+				>
+					<span
+						className={cn("font-semibold", suitInfo.colorClass)}
+						title={altText}
+					>
+						{rank}
+						{suitInfo.char}
+					</span>
+				</div>
+			)}
+			<img
+				src={imageUrl}
+				alt={altText}
+				className={cn(
+					"inline-block select-none",
+					sizeClasses[size],
+					isLoaded ? "opacity-100" : "absolute opacity-0",
+				)}
+				loading="eager"
+				draggable="false"
+				onLoad={() => setIsLoaded(true)}
+				onError={() => {
+					console.error(`Failed to load card image: ${imageUrl}`);
+				}}
+			/>
+		</div>
 	);
 };
 
