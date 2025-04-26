@@ -8,6 +8,7 @@ import {
 	getGameState,
 	redis,
 	setGameState,
+	setRoomMember,
 	storeMessage,
 	updateRoomMemberActiveStatus,
 } from "./redis";
@@ -355,7 +356,29 @@ export function handleWebSocket(
 						await broadcastGameState(roomId);
 
 						if (updatedGameState.phase === "end_hand") {
-							console.log(`Hand ended in room ${roomId}.`);
+							console.log(
+								`Hand ended in room ${roomId}. Updating member stacks in Redis.`,
+							);
+							const finalPlayerStates = updatedGameState.playerStates;
+							const currentMembers = await getAllRoomMembers(roomId);
+
+							const updatePromises = currentMembers.map(async (member) => {
+								const finalState = finalPlayerStates[member.userId];
+								if (finalState) {
+									const updatedMemberInfo: RoomMemberInfo = {
+										...member,
+										currentStack: finalState.stack,
+										wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
+									};
+									return setRoomMember(roomId, updatedMemberInfo);
+								}
+								return Promise.resolve();
+							});
+
+							await Promise.all(updatePromises);
+							console.log(
+								`Finished updating member stacks in Redis for room ${roomId}.`,
+							);
 						}
 					} catch (error: unknown) {
 						let errorMessage =
