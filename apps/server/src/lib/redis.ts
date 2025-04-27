@@ -248,7 +248,6 @@ export async function setGameState(
 ): Promise<void> {
 	try {
 		const key = getRoomGameKey(roomId);
-		gameState.lastUpdateTime = Date.now();
 		await redis.set(key, gameState, { ex: ROOM_STATE_EXPIRY });
 	} catch (error) {
 		console.error(`Failed to set game state for room ${roomId}:`, error);

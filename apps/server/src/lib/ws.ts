@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import type { WSContext } from "hono/ws";
+import { produce } from "immer";
 import { nanoid } from "nanoid";
 import type { GameState, PlayerState } from "./poker";
 import { performAction } from "./poker";
@@ -104,60 +105,90 @@ const MAX_MESSAGE_LENGTH = 32;
 
 function broadcast(roomId: string, message: ServerWebSocketMessage) {
 	const roomConnections = rooms.get(roomId);
-	if (!roomConnections) return;
+	if (!roomConnections || roomConnections.size === 0) return;
 
-	const messageString = JSON.stringify(message);
+	let commonMessageString: string | undefined;
+	if (message.type !== "game_state") {
+		try {
+			commonMessageString = JSON.stringify(message);
+		} catch (error) {
+			console.error(
+				`[Broadcast Error] Failed to stringify common message for room ${roomId}:`,
+				error,
+				message,
+			);
+			return;
+		}
+	}
 
-	for (const [userId, client] of roomConnections) {
+	for (const [clientUserId, client] of roomConnections) {
 		if (client.readyState === 1) {
-			let messageToSendString = messageString;
+			let messageToSendString: string;
 
 			if (message.type === "game_state") {
-				const gameStateWithoutDeck = message.gameState;
-				const maskedPlayerStates: Record<string, PlayerState> = {};
-				for (const pId in gameStateWithoutDeck.playerStates) {
-					const playerState = gameStateWithoutDeck.playerStates[pId];
-					if (pId === userId) {
-						maskedPlayerStates[pId] = playerState;
-					} else {
-						maskedPlayerStates[pId] = { ...playerState, hand: [] };
-					}
+				let clientSpecificMessage: GameStateUpdate;
+				try {
+					clientSpecificMessage = produce(message, (draft) => {
+						if (draft.type === "game_state") {
+							for (const pId in draft.gameState.playerStates) {
+								if (pId !== clientUserId) {
+									draft.gameState.playerStates[pId].hand = [];
+								}
+							}
+						} else {
+							console.error(
+								"[Broadcast Immer Error] Unexpected message type inside produce:",
+								draft.type,
+							);
+
+							throw new Error("Unexpected message type in Immer produce");
+						}
+					});
+
+					messageToSendString = JSON.stringify(clientSpecificMessage);
+				} catch (error) {
+					console.error(
+						`[Broadcast Error] Failed during Immer production or serialization for user ${clientUserId} in room ${roomId}:`,
+						error,
+						message,
+					);
+					continue;
 				}
-				const maskedGameStateUpdate: GameStateUpdate = {
-					type: "game_state",
-					gameState: {
-						...gameStateWithoutDeck,
-						playerStates: maskedPlayerStates,
-					},
-				};
-				messageToSendString = JSON.stringify(maskedGameStateUpdate);
+			} else {
+				if (commonMessageString === undefined) {
+					console.error(
+						`[Broadcast Error] commonMessageString is undefined for non-game_state message type ${message.type} in room ${roomId}. Skipping send.`,
+					);
+					continue;
+				}
+				messageToSendString = commonMessageString;
 			}
 
 			try {
 				client.send(messageToSendString);
 			} catch (error) {
 				console.error(
-					`Failed to send message to user ${userId} in room ${roomId}:`,
+					`[Broadcast Error] Failed to send message to user ${clientUserId} in room ${roomId}:`,
 					error,
 				);
+				// add logic here to remove the client if sending fails repeatedly?
 			}
 		} else {
 			console.warn(
-				`Removing non-open WebSocket connection for user ${userId} in room ${roomId}. State: ${client.readyState}`,
+				`[Broadcast Cleanup] Removing non-open WebSocket connection for user ${clientUserId} in room ${roomId}. State: ${client.readyState}`,
 			);
-			roomConnections.delete(userId);
+			roomConnections.delete(clientUserId);
 
 			Promise.allSettled([
-				updateRoomMemberActiveStatus(roomId, userId, false),
-				broadcastRoomState(roomId),
-				broadcastGameState(roomId),
+				updateRoomMemberActiveStatus(roomId, clientUserId, false),
 			]).catch(console.error);
 
 			if (roomConnections.size === 0) {
 				console.log(
-					`Room ${roomId} is now empty after cleanup. Removing from active rooms map.`,
+					`[Broadcast Cleanup] Room ${roomId} is now empty after cleaning stale connection. Removing from active rooms map.`,
 				);
 				rooms.delete(roomId);
+				break;
 			}
 		}
 	}
@@ -168,22 +199,39 @@ export async function broadcastRoomState(roomId: string) {
 		const members = await getAllRoomMembers(roomId);
 		broadcast(roomId, { type: "room_state", members });
 	} catch (error) {
-		console.error(`Failed to broadcast room state for room ${roomId}:`, error);
+		console.error(
+			`[BroadcastRoomState Error] Failed for room ${roomId}:`,
+			error,
+		);
 	}
 }
 
-export async function broadcastGameState(roomId: string) {
+export async function broadcastGameState(
+	roomId: string,
+	currentGameState?: GameState | null,
+) {
 	try {
-		const fullGameState = await getGameState(roomId);
-		if (fullGameState) {
-			const { deck, ...gameStateWithoutDeck } = fullGameState;
+		const gameStateToBroadcast =
+			currentGameState === undefined
+				? await getGameState(roomId)
+				: currentGameState;
+
+		if (gameStateToBroadcast) {
+			const { deck, ...gameStateWithoutDeck } = gameStateToBroadcast;
 			broadcast(roomId, {
 				type: "game_state",
 				gameState: gameStateWithoutDeck,
 			});
+		} else {
+			console.log(
+				`[BroadcastGameState] No game state found or provided for room ${roomId}, not broadcasting game state.`,
+			);
 		}
 	} catch (error) {
-		console.error(`Failed to broadcast game state for room ${roomId}:`, error);
+		console.error(
+			`[BroadcastGameState Error] Failed for room ${roomId}:`,
+			error,
+		);
 	}
 }
 
@@ -191,7 +239,9 @@ export function broadcastRoomClosed(roomId: string) {
 	broadcast(roomId, { type: "room_closed" });
 	const roomConnections = rooms.get(roomId);
 	if (roomConnections) {
-		console.log(`Closing all connections for room ${roomId} due to closure.`);
+		console.log(
+			`[Room Closure] Closing all connections for room ${roomId} due to closure.`,
+		);
 		for (const [userId, ws] of roomConnections) {
 			try {
 				if (ws.readyState === 1) {
@@ -199,7 +249,7 @@ export function broadcastRoomClosed(roomId: string) {
 				}
 			} catch (error) {
 				console.error(
-					`Error closing WebSocket for user ${userId} in room ${roomId}:`,
+					`[Room Closure Error] Error closing WebSocket for user ${userId} in room ${roomId}:`,
 					error,
 				);
 			}
@@ -220,14 +270,14 @@ export function handleWebSocket(
 		) => {
 			if (!roomId || !userId || !username) {
 				console.error(
-					"WebSocket opened but missing required parameters. Closing.",
+					"[WS OnOpen Error] Missing required parameters. Closing connection.",
 				);
 				ws.close(1008, "Missing required parameters");
 				return;
 			}
 
 			console.log(
-				`WebSocket connection opened for user ${userId} (${username}) in room ${roomId}`,
+				`[WS OnOpen] Connection opened for user ${userId} (${username}) in room ${roomId}`,
 			);
 
 			let roomConnections = rooms.get(roomId);
@@ -237,20 +287,23 @@ export function handleWebSocket(
 					WSContext<ServerWebSocket<undefined>>
 				>();
 				rooms.set(roomId, roomConnections);
+				console.log(
+					`[WS OnOpen] Created new connection map for room ${roomId}.`,
+				);
 			}
 
 			if (roomConnections.has(userId)) {
 				console.warn(
-					`User ${userId} already connected to room ${roomId}. Closing previous connection.`,
+					`[WS OnOpen] User ${userId} already connected to room ${roomId}. Closing previous connection.`,
 				);
 				const oldWs = roomConnections.get(userId);
 				try {
-					if (oldWs && oldWs.readyState === 1) {
+					if (oldWs && oldWs.readyState === 1 /* OPEN */) {
 						oldWs.close(1011, "New connection established");
 					}
 				} catch (error) {
 					console.error(
-						`Error closing old WebSocket for user ${userId} in room ${roomId}:`,
+						`[WS OnOpen Error] Error closing old WebSocket for user ${userId} in room ${roomId}:`,
 						error,
 					);
 				}
@@ -258,7 +311,7 @@ export function handleWebSocket(
 
 			roomConnections.set(userId, ws);
 			console.log(
-				`User ${userId} (${username}) connection stored for room ${roomId}. Total users: ${roomConnections.size}`,
+				`[WS OnOpen] User ${userId} (${username}) connection stored for room ${roomId}. Total users: ${roomConnections.size}`,
 			);
 
 			try {
@@ -269,9 +322,9 @@ export function handleWebSocket(
 					ws.send(JSON.stringify({ type: "room_state", members }));
 				}
 
-				const gameState = await getGameState(roomId);
-				if (gameState && ws.readyState === 1) {
-					const { deck, ...gameStateWithoutDeck } = gameState;
+				const initialGameState = await getGameState(roomId);
+				if (initialGameState && ws.readyState === 1) {
+					const { deck, ...gameStateWithoutDeck } = initialGameState;
 					const maskedPlayerStates: Record<string, PlayerState> = {};
 					for (const pId in gameStateWithoutDeck.playerStates) {
 						const playerState = gameStateWithoutDeck.playerStates[pId];
@@ -289,7 +342,7 @@ export function handleWebSocket(
 				}
 
 				const recentMessages = await getRecentMessages(roomId);
-				if (ws.readyState === 1) {
+				if (ws.readyState === 1 && recentMessages.length > 0) {
 					const historyMessage: MessageHistory = {
 						type: "history",
 						messages: recentMessages,
@@ -300,9 +353,17 @@ export function handleWebSocket(
 				await broadcastRoomState(roomId);
 			} catch (error) {
 				console.error(
-					`Error during WebSocket onOpen for user ${userId} in room ${roomId}:`,
+					`[WS OnOpen Error] During state initialization for user ${userId} in room ${roomId}:`,
 					error,
 				);
+				if (ws.readyState === 1) {
+					ws.send(
+						JSON.stringify({
+							type: "error",
+							message: "Failed to initialize connection state.",
+						}),
+					);
+				}
 			}
 		},
 
@@ -314,15 +375,18 @@ export function handleWebSocket(
 				const payload: ClientWebSocketMessage = JSON.parse(
 					event.data.toString(),
 				);
-				console.log(
-					`Received message from ${userId} in room ${roomId}:`,
-					payload,
+				console.debug(
+					`[WS OnMessage] Received from ${userId} in room ${roomId}:`,
+					payload.type,
 				);
 
 				if (payload.type === "chat") {
 					let messageContent = payload.message.trim();
 					if (messageContent.length > MAX_MESSAGE_LENGTH) {
 						messageContent = messageContent.substring(0, MAX_MESSAGE_LENGTH);
+						console.log(
+							`[WS OnMessage] Chat message from ${userId} truncated.`,
+						);
 					}
 					if (!messageContent) return;
 
@@ -342,7 +406,7 @@ export function handleWebSocket(
 					const currentGameState = await getGameState(roomId);
 					if (!currentGameState) {
 						console.error(
-							`Received action from ${userId} for room ${roomId} but no game state found.`,
+							`[WS OnMessage Action Error] Received action from ${userId} for room ${roomId} but no game state found.`,
 						);
 						if (ws.readyState === 1) {
 							ws.send(
@@ -350,6 +414,19 @@ export function handleWebSocket(
 									type: "error",
 									message: "Game not found or not started.",
 								}),
+							);
+						}
+						return;
+					}
+
+					const userSeat = currentGameState.playerStates[userId]?.seatNumber;
+					if (currentGameState.currentPlayerSeat !== userSeat) {
+						console.warn(
+							`[WS OnMessage Action] Action received from ${userId} (Seat ${userSeat}) but not their turn (Current Seat: ${currentGameState.currentPlayerSeat}). Ignoring.`,
+						);
+						if (ws.readyState === 1) {
+							ws.send(
+								JSON.stringify({ type: "error", message: "Not your turn." }),
 							);
 						}
 						return;
@@ -363,11 +440,11 @@ export function handleWebSocket(
 						);
 
 						await setGameState(roomId, updatedGameState);
-						await broadcastGameState(roomId);
+						await broadcastGameState(roomId, updatedGameState);
 
 						if (updatedGameState.phase === "end_hand") {
 							console.log(
-								`Hand ended in room ${roomId}. Updating member stacks in Redis.`,
+								`[WS OnMessage Action] Hand ended in room ${roomId}. Updating member stacks in Redis.`,
 							);
 							const finalPlayerStates = updatedGameState.playerStates;
 							const currentMembers = await getAllRoomMembers(roomId);
@@ -387,20 +464,19 @@ export function handleWebSocket(
 
 							await Promise.all(updatePromises);
 							console.log(
-								`Finished updating member stacks in Redis for room ${roomId}.`,
+								`[WS OnMessage Action] Finished updating member stacks in Redis for room ${roomId}.`,
 							);
+							await broadcastRoomState(roomId);
 						}
 					} catch (error: unknown) {
-						let errorMessage =
-							"An unknown error occurred while performing the action.";
+						let errorMessage = "An error occurred while performing the action.";
 						if (error instanceof Error) {
 							errorMessage = error.message;
 						} else if (typeof error === "string") {
 							errorMessage = error;
 						}
 						console.error(
-							`Error performing action for user ${userId} in room ${roomId}:`,
-							errorMessage,
+							`[WS OnMessage Action Error] User ${userId}, Room ${roomId}: ${errorMessage}`,
 							error,
 						);
 
@@ -411,14 +487,15 @@ export function handleWebSocket(
 				}
 			} catch (error: unknown) {
 				console.error(
-					`Failed to handle WebSocket message from ${userId} in room ${roomId}:`,
+					`[WS OnMessage Error] Failed to handle message from ${userId} in room ${roomId}:`,
 					error,
 				);
 				if (ws.readyState === 1) {
 					ws.send(
 						JSON.stringify({
 							type: "error",
-							message: "Invalid message format or server error.",
+							message:
+								"Invalid message format or server error processing message.",
 						}),
 					);
 				}
@@ -427,47 +504,56 @@ export function handleWebSocket(
 
 		onClose: async (
 			event: CloseEvent,
-			_ws: WSContext<ServerWebSocket<undefined>>,
+			ws: WSContext<ServerWebSocket<undefined>>,
 		) => {
 			console.log(
-				`WebSocket connection closed for user ${userId} in room ${roomId}. Code: ${event.code}, Reason: ${event.reason}`,
+				`[WS OnClose] Connection closed for user ${userId} in room ${roomId}. Code: ${event.code}, Reason: ${event.reason}`,
 			);
 
 			const roomConnections = rooms.get(roomId);
 			if (roomConnections) {
-				if (roomConnections.get(userId) === _ws) {
+				if (roomConnections.get(userId) === ws) {
 					roomConnections.delete(userId);
 					console.log(
-						`Removed user ${userId} connection from room ${roomId}. Remaining: ${roomConnections.size}`,
+						`[WS OnClose] Removed user ${userId} connection from room ${roomId}. Remaining: ${roomConnections.size}`,
 					);
 
-					Promise.allSettled([
+					const results = await Promise.allSettled([
 						updateRoomMemberActiveStatus(roomId, userId, false),
 						broadcastRoomState(roomId),
 						broadcastGameState(roomId),
-					]).catch(console.error);
+					]);
+
+					results.forEach((result, index) => {
+						if (result.status === "rejected") {
+							console.error(
+								`[WS OnClose Cleanup Error] Task ${index} failed for user ${userId}, room ${roomId}:`,
+								result.reason,
+							);
+						}
+					});
 
 					if (roomConnections.size === 0) {
 						console.log(
-							`Room ${roomId} is now empty after onClose. Removing from active rooms map.`,
+							`[WS OnClose] Room ${roomId} is now empty. Removing from active rooms map.`,
 						);
 						rooms.delete(roomId);
 					}
 				} else {
 					console.log(
-						`onClose called for user ${userId}, but the stored WebSocket instance did not match. No cleanup performed for this event.`,
+						`[WS OnClose] onClose called for user ${userId} in room ${roomId}, but the stored WebSocket instance did not match the closing one. No cleanup performed for this specific event instance.`,
 					);
 				}
 			} else {
 				console.log(
-					`onClose called for user ${userId}, but room ${roomId} was not found in the map.`,
+					`[WS OnClose] onClose called for user ${userId}, but room ${roomId} was not found in the active rooms map.`,
 				);
 			}
 		},
 
-		onError: (evt: Event, ws: WSContext<ServerWebSocket<undefined>>) => {
+		onError: async (evt: Event, ws: WSContext<ServerWebSocket<undefined>>) => {
 			console.error(
-				`WebSocket error event for user ${userId} in room ${roomId}:`,
+				`[WS OnError] WebSocket error event for user ${userId} in room ${roomId}:`,
 				evt,
 			);
 
@@ -475,30 +561,43 @@ export function handleWebSocket(
 			if (roomConnections && roomConnections.get(userId) === ws) {
 				roomConnections.delete(userId);
 				console.log(
-					`Removed user ${userId} connection from room ${roomId} due to error. Remaining: ${roomConnections.size}`,
+					`[WS OnError] Removed user ${userId} connection from room ${roomId} due to error. Remaining: ${roomConnections.size}`,
 				);
 
-				Promise.allSettled([
+				const results = await Promise.allSettled([
 					updateRoomMemberActiveStatus(roomId, userId, false),
 					broadcastRoomState(roomId),
 					broadcastGameState(roomId),
-				]).catch(console.error);
+				]);
+
+				results.forEach((result, index) => {
+					if (result.status === "rejected") {
+						console.error(
+							`[WS OnError Cleanup Error] Task ${index} failed for user ${userId}, room ${roomId}:`,
+							result.reason,
+						);
+					}
+				});
 
 				if (roomConnections.size === 0) {
 					console.log(
-						`Room ${roomId} is now empty after onError. Removing from active rooms map.`,
+						`[WS OnError] Room ${roomId} is now empty after error handling. Removing from active rooms map.`,
 					);
 					rooms.delete(roomId);
 				}
+			} else {
+				console.warn(
+					`[WS OnError] onError received for user ${userId} in room ${roomId}, but the WebSocket instance didn't match the stored one or the room wasn't found.`,
+				);
 			}
 
 			try {
-				if (ws.readyState === 1) {
+				if (ws.readyState === 1 || ws.readyState === 0) {
 					ws.close(1011, "WebSocket error occurred");
 				}
 			} catch (closeError) {
 				console.error(
-					`Error trying to close WebSocket after error for user ${userId}:`,
+					`[WS OnError] Error trying to close WebSocket after error for user ${userId} in room ${roomId}:`,
 					closeError,
 				);
 			}
@@ -509,10 +608,17 @@ export function handleWebSocket(
 export async function cleanupRoomMessages(roomId: string): Promise<void> {
 	try {
 		const messageKey = `room:${roomId}:messages`;
-		console.log(`Cleaning up messages for room ${roomId} (Key: ${messageKey})`);
+		console.log(
+			`[Cleanup] Cleaning up messages for room ${roomId} (Key: ${messageKey})`,
+		);
 		const result = await redis.del(messageKey);
-		console.log(`Message cleanup result for room ${roomId}: ${result}`);
+		console.log(
+			`[Cleanup] Message cleanup result for room ${roomId}: ${result} keys deleted.`,
+		);
 	} catch (error) {
-		console.error(`Failed to cleanup room messages for ${roomId}:`, error);
+		console.error(
+			`[Cleanup Error] Failed to cleanup room messages for ${roomId}:`,
+			error,
+		);
 	}
 }

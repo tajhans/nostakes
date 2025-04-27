@@ -1,3 +1,4 @@
+import { produce } from "immer";
 import type { RoomMemberInfo } from "./redis";
 
 export type Suit = "C" | "D" | "H" | "S";
@@ -959,306 +960,312 @@ function applyAction(
 	action: ClientPokerAction["action"],
 	amount?: number,
 ): GameState {
-	const newState = structuredClone(gameState);
-	const actingPlayer = newState.playerStates[playerState.userId];
-	actingPlayer.hasActed = true;
-	newState.lastActionPlayerSeat = actingPlayer.seatNumber;
-
-	let actionDesc = "";
-	const playerSeat = actingPlayer.seatNumber;
-	const currentBetLevel = newState.currentBet;
-
-	switch (action) {
-		case "fold":
-			actingPlayer.isFolded = true;
-			actionDesc = `Seat ${playerSeat} folds.`;
-			break;
-		case "check":
-			if (
-				newState.phase === "preflop" &&
-				actingPlayer.seatNumber === newState.bigBlindSeat &&
-				actingPlayer.currentBet === currentBetLevel
-			) {
-				actionDesc = `Seat ${playerSeat} checks (BB option).`;
-			} else {
-				actionDesc = `Seat ${playerSeat} checks.`;
-			}
-			break;
-		case "call": {
-			const amountToCall = Math.min(
-				currentBetLevel - actingPlayer.currentBet,
-				actingPlayer.stack,
+	return produce(gameState, (draft) => {
+		const actingPlayer = draft.playerStates[playerState.userId];
+		if (!actingPlayer) {
+			console.error(
+				"Acting player not found in draft state during applyAction",
 			);
-			actingPlayer.stack -= amountToCall;
-			actingPlayer.currentBet += amountToCall;
-			actingPlayer.totalBet += amountToCall;
-			newState.pot += amountToCall;
-			actionDesc = `Seat ${playerSeat} calls ${amountToCall}.`;
-			if (actingPlayer.stack === 0) {
-				actingPlayer.isAllIn = true;
-				actionDesc += " (ALL-IN)";
-			}
-			break;
+			return;
 		}
-		case "bet": {
-			const validBetAmount = amount !== undefined && amount > 0 ? amount : 0;
-			const betAmountValue = Math.min(validBetAmount, actingPlayer.stack);
 
-			actingPlayer.stack -= betAmountValue;
-			actingPlayer.currentBet = betAmountValue;
-			actingPlayer.totalBet += betAmountValue;
-			newState.pot += betAmountValue;
-			newState.currentBet = betAmountValue;
-			newState.minRaiseAmount = betAmountValue;
-			actionDesc = `Seat ${playerSeat} bets ${betAmountValue}.`;
-			if (actingPlayer.stack === 0) {
-				actingPlayer.isAllIn = true;
-				actionDesc += " (ALL-IN)";
-			}
-			for (const p of Object.values(newState.playerStates)) {
+		actingPlayer.hasActed = true;
+		draft.lastActionPlayerSeat = actingPlayer.seatNumber;
+
+		let actionDesc = "";
+		const playerSeat = actingPlayer.seatNumber;
+		const currentBetLevel = draft.currentBet;
+
+		switch (action) {
+			case "fold":
+				actingPlayer.isFolded = true;
+				actionDesc = `Seat ${playerSeat} folds.`;
+				break;
+			case "check":
 				if (
-					p.userId !== actingPlayer.userId &&
-					!p.isAllIn &&
-					!p.isFolded &&
-					!p.isSittingOut
+					draft.phase === "preflop" &&
+					actingPlayer.seatNumber === draft.bigBlindSeat &&
+					actingPlayer.currentBet === currentBetLevel
 				) {
-					p.hasActed = false;
+					actionDesc = `Seat ${playerSeat} checks (BB option).`;
+				} else {
+					actionDesc = `Seat ${playerSeat} checks.`;
 				}
+				break;
+			case "call": {
+				const amountToCall = Math.min(
+					currentBetLevel - actingPlayer.currentBet,
+					actingPlayer.stack,
+				);
+				actingPlayer.stack -= amountToCall;
+				actingPlayer.currentBet += amountToCall;
+				actingPlayer.totalBet += amountToCall;
+				draft.pot += amountToCall;
+				actionDesc = `Seat ${playerSeat} calls ${amountToCall}.`;
+				if (actingPlayer.stack === 0) {
+					actingPlayer.isAllIn = true;
+					actionDesc += " (ALL-IN)";
+				}
+				break;
 			}
-			break;
-		}
-		case "raise": {
-			const validRaiseAmount = amount !== undefined && amount > 0 ? amount : 0;
-			const targetRaiseTotal = Math.min(
-				validRaiseAmount,
-				actingPlayer.stack + actingPlayer.currentBet,
-			);
-			const amountAdded = targetRaiseTotal - actingPlayer.currentBet;
-			const actualRaiseIncrease = targetRaiseTotal - currentBetLevel;
+			case "bet": {
+				const validBetAmount = amount !== undefined && amount > 0 ? amount : 0;
+				const betAmountValue = Math.min(validBetAmount, actingPlayer.stack);
 
-			actingPlayer.stack -= amountAdded;
-			actingPlayer.currentBet = targetRaiseTotal;
-			actingPlayer.totalBet += amountAdded;
-			newState.pot += amountAdded;
-			newState.currentBet = targetRaiseTotal;
-
-			if (
-				actualRaiseIncrease >= gameState.minRaiseAmount ||
-				actingPlayer.stack === 0
-			) {
-				newState.minRaiseAmount = actualRaiseIncrease;
+				actingPlayer.stack -= betAmountValue;
+				actingPlayer.currentBet = betAmountValue;
+				actingPlayer.totalBet += betAmountValue;
+				draft.pot += betAmountValue;
+				draft.currentBet = betAmountValue;
+				draft.minRaiseAmount = betAmountValue;
+				actionDesc = `Seat ${playerSeat} bets ${betAmountValue}.`;
+				if (actingPlayer.stack === 0) {
+					actingPlayer.isAllIn = true;
+					actionDesc += " (ALL-IN)";
+				}
+				for (const p of Object.values(draft.playerStates)) {
+					if (
+						p.userId !== actingPlayer.userId &&
+						!p.isAllIn &&
+						!p.isFolded &&
+						!p.isSittingOut
+					) {
+						p.hasActed = false;
+					}
+				}
+				break;
 			}
+			case "raise": {
+				const validRaiseAmount =
+					amount !== undefined && amount > 0 ? amount : 0;
+				const targetRaiseTotal = Math.min(
+					validRaiseAmount,
+					actingPlayer.stack + actingPlayer.currentBet,
+				);
+				const amountAdded = targetRaiseTotal - actingPlayer.currentBet;
+				const actualRaiseIncrease = targetRaiseTotal - currentBetLevel;
 
-			actionDesc = `Seat ${playerSeat} raises to ${targetRaiseTotal}.`;
-			if (actingPlayer.stack === 0) {
-				actingPlayer.isAllIn = true;
-				actionDesc += " (ALL-IN)";
-			}
+				actingPlayer.stack -= amountAdded;
+				actingPlayer.currentBet = targetRaiseTotal;
+				actingPlayer.totalBet += amountAdded;
+				draft.pot += amountAdded;
+				draft.currentBet = targetRaiseTotal;
 
-			for (const p of Object.values(newState.playerStates)) {
 				if (
-					p.userId !== actingPlayer.userId &&
-					!p.isAllIn &&
-					!p.isFolded &&
-					!p.isSittingOut
+					actualRaiseIncrease >= draft.minRaiseAmount ||
+					actingPlayer.stack === 0
 				) {
-					p.hasActed = false;
+					draft.minRaiseAmount = actualRaiseIncrease;
 				}
+
+				actionDesc = `Seat ${playerSeat} raises to ${targetRaiseTotal}.`;
+				if (actingPlayer.stack === 0) {
+					actingPlayer.isAllIn = true;
+					actionDesc += " (ALL-IN)";
+				}
+
+				for (const p of Object.values(draft.playerStates)) {
+					if (
+						p.userId !== actingPlayer.userId &&
+						!p.isAllIn &&
+						!p.isFolded &&
+						!p.isSittingOut
+					) {
+						p.hasActed = false;
+					}
+				}
+				break;
 			}
-			break;
+			default: {
+				console.error("applyAction called with unknown action:", action);
+				actionDesc = `Seat ${playerSeat} performed unknown action.`;
+				break;
+			}
 		}
-		default: {
-			const _exhaustiveCheck: never = action;
-			console.error("applyAction called with unknown action:", action);
-			actionDesc = `Seat ${playerSeat} performed unknown action.`;
-			break;
-		}
-	}
 
-	newState.handHistory.push(actionDesc);
-	newState.lastUpdateTime = Date.now();
-
-	return newState;
+		draft.handHistory.push(actionDesc);
+		draft.lastUpdateTime = Date.now();
+	});
 }
 
 function dealCommunityCards(gameState: GameState): GameState {
-	const newState = structuredClone(gameState);
+	return produce(gameState, (draft) => {
+		const cardsToDeal =
+			draft.phase === "preflop"
+				? 3
+				: draft.phase === "flop" || draft.phase === "turn"
+					? 1
+					: 0;
 
-	const cardsToDeal =
-		newState.phase === "preflop"
-			? 3
-			: newState.phase === "flop" || newState.phase === "turn"
-				? 1
-				: 0;
+		if (cardsToDeal > 0) {
+			const activePlayers = Object.values(draft.playerStates).filter(
+				(p) => !p.isFolded && !p.isSittingOut,
+			).length;
 
-	if (cardsToDeal > 0) {
-		const activePlayers = Object.values(newState.playerStates).filter(
-			(p) => !p.isFolded && !p.isSittingOut,
-		).length;
+			if (activePlayers > 1) {
+				if (draft.deck.length > 0) {
+					draft.deck.shift();
+				} else {
+					console.error("Not enough cards in deck to burn!");
+				}
 
-		if (activePlayers > 1) {
-			if (newState.deck.length > 0) {
-				newState.deck.shift();
-			} else {
-				console.error("Not enough cards in deck to burn!");
-			}
-
-			const dealtCards: Card[] = [];
-			for (let i = 0; i < cardsToDeal; i++) {
-				if (newState.deck.length > 0) {
-					const card = newState.deck.shift();
-					if (card) {
-						newState.communityCards.push(card);
-						dealtCards.push(card);
+				const dealtCards: Card[] = [];
+				for (let i = 0; i < cardsToDeal; i++) {
+					if (draft.deck.length > 0) {
+						const card = draft.deck.shift();
+						if (card) {
+							draft.communityCards.push(card);
+							dealtCards.push(card);
+						} else {
+							console.error("Deck shift returned undefined unexpectedly!");
+							break;
+						}
 					} else {
-						console.error("Deck shift returned undefined unexpectedly!");
+						console.error("Deck unexpectedly ran out during community deal!");
 						break;
 					}
-				} else {
-					console.error("Deck unexpectedly ran out during community deal!");
-					break;
 				}
-			}
 
-			let phaseName = "";
-			if (newState.phase === "preflop") {
-				newState.phase = "flop";
-				phaseName = "Flop";
-			} else if (newState.phase === "flop") {
-				newState.phase = "turn";
-				phaseName = "Turn";
-			} else if (newState.phase === "turn") {
-				newState.phase = "river";
-				phaseName = "River";
-			}
-
-			if (dealtCards.length > 0) {
-				newState.handHistory.push(
-					`${phaseName} dealt: ${dealtCards.map((c) => c.rank + c.suit).join(" ")}`,
-				);
-			}
-
-			newState.currentBet = 0;
-			newState.minRaiseAmount = newState.roomConfig.bigBlind;
-			newState.lastActionPlayerSeat = null;
-
-			for (const p of Object.values(newState.playerStates)) {
-				p.currentBet = 0;
-				if (!p.isAllIn && !p.isFolded && !p.isSittingOut) {
-					p.hasActed = false;
+				let phaseName = "";
+				if (draft.phase === "preflop") {
+					draft.phase = "flop";
+					phaseName = "Flop";
+				} else if (draft.phase === "flop") {
+					draft.phase = "turn";
+					phaseName = "Turn";
+				} else if (draft.phase === "turn") {
+					draft.phase = "river";
+					phaseName = "River";
 				}
-			}
 
-			newState.currentPlayerSeat = getFirstToActSeat(newState);
+				if (dealtCards.length > 0) {
+					draft.handHistory.push(
+						`${phaseName} dealt: ${dealtCards.map((c) => c.rank + c.suit).join(" ")}`,
+					);
+				}
 
-			while (newState.currentPlayerSeat) {
-				const currentUserIdInLoop = Object.keys(newState.playerStates).find(
-					(uid) =>
-						newState.playerStates[uid].seatNumber ===
-						newState.currentPlayerSeat,
-				);
-				if (
-					currentUserIdInLoop &&
-					newState.playerStates[currentUserIdInLoop]?.isAllIn
-				) {
-					const seatBeforeSkip = newState.currentPlayerSeat;
-					newState.currentPlayerSeat = getNextActivePlayerSeat(
-						newState,
-						seatBeforeSkip,
+				draft.currentBet = 0;
+				draft.minRaiseAmount = draft.roomConfig.bigBlind;
+				draft.lastActionPlayerSeat = null;
+
+				for (const p of Object.values(draft.playerStates)) {
+					p.currentBet = 0;
+					if (!p.isAllIn && !p.isFolded && !p.isSittingOut) {
+						p.hasActed = false;
+					}
+				}
+
+				draft.currentPlayerSeat = getFirstToActSeat(draft);
+
+				while (draft.currentPlayerSeat) {
+					const currentUserIdInLoop = Object.keys(draft.playerStates).find(
+						(uid) =>
+							draft.playerStates[uid].seatNumber === draft.currentPlayerSeat,
 					);
 					if (
-						newState.currentPlayerSeat === seatBeforeSkip ||
-						newState.currentPlayerSeat === null
+						currentUserIdInLoop &&
+						draft.playerStates[currentUserIdInLoop]?.isAllIn
 					) {
-						newState.currentPlayerSeat = null;
+						const seatBeforeSkip = draft.currentPlayerSeat;
+						draft.currentPlayerSeat = getNextActivePlayerSeat(
+							draft,
+							seatBeforeSkip,
+						);
+						if (
+							draft.currentPlayerSeat === seatBeforeSkip ||
+							draft.currentPlayerSeat === null
+						) {
+							draft.currentPlayerSeat = null;
+							break;
+						}
+					} else {
 						break;
 					}
-				} else {
-					break;
 				}
-			}
 
-			if (newState.currentPlayerSeat) {
-				newState.handHistory.push(
-					`Seat ${newState.currentPlayerSeat} is first to act.`,
-				);
+				if (draft.currentPlayerSeat) {
+					draft.handHistory.push(
+						`Seat ${draft.currentPlayerSeat} is first to act.`,
+					);
+				} else {
+					draft.handHistory.push(
+						"All remaining players are all-in or only one player left. No further betting on this street.",
+					);
+				}
 			} else {
-				newState.handHistory.push(
-					"All remaining players are all-in. No further betting on this street.",
-				);
+				draft.handHistory.push("Only one player remaining. Hand concludes.");
+				draft.phase = "showdown";
 			}
-		} else {
-			newState.handHistory.push("Only one player remaining. Hand concludes.");
-			newState.phase = "showdown";
 		}
-	}
 
-	newState.lastUpdateTime = Date.now();
-	return newState;
+		draft.lastUpdateTime = Date.now();
+	});
 }
 
 function dealRemainingBoard(gameState: GameState): GameState {
-	const newState = structuredClone(gameState);
-	const cardsNeeded = 5 - newState.communityCards.length;
+	return produce(gameState, (draft) => {
+		const cardsNeeded = 5 - draft.communityCards.length;
 
-	if (cardsNeeded <= 0) {
-		return newState;
-	}
+		if (cardsNeeded <= 0) {
+			return;
+		}
 
-	newState.handHistory.push("Dealing remaining community cards...");
+		draft.handHistory.push("Dealing remaining community cards...");
 
-	if (newState.phase === "preflop" && newState.communityCards.length < 3) {
-		if (newState.deck.length > 0) newState.deck.shift();
-		else console.error("Not enough cards to burn before flop!");
-		const flopCards: Card[] = [];
-		for (let i = 0; i < 3; i++) {
-			if (newState.deck.length > 0) {
-				const card = newState.deck.shift();
-				if (card) {
-					newState.communityCards.push(card);
-					flopCards.push(card);
+		if (draft.phase === "preflop" && draft.communityCards.length < 3) {
+			if (draft.deck.length > 0) draft.deck.shift();
+			else console.error("Not enough cards to burn before flop!");
+			const flopCards: Card[] = [];
+			for (let i = 0; i < 3; i++) {
+				if (draft.deck.length > 0) {
+					const card = draft.deck.shift();
+					if (card) {
+						draft.communityCards.push(card);
+						flopCards.push(card);
+					} else break;
 				} else break;
-			} else break;
-		}
-		if (flopCards.length > 0) {
-			newState.handHistory.push(
-				`Flop: ${flopCards.map((c) => c.rank + c.suit).join(" ")}`,
-			);
-		}
-		newState.phase = "flop";
-	}
-
-	if (newState.phase === "flop" && newState.communityCards.length < 4) {
-		if (newState.deck.length > 0) newState.deck.shift();
-		else console.error("Not enough cards to burn before turn!");
-		if (newState.deck.length > 0) {
-			const card = newState.deck.shift();
-			if (card) {
-				newState.communityCards.push(card);
-				newState.handHistory.push(`Turn: ${card.rank}${card.suit}`);
 			}
-		} else console.error("Deck ran out dealing turn!");
-		newState.phase = "turn";
-	}
-
-	if (newState.phase === "turn" && newState.communityCards.length < 5) {
-		if (newState.deck.length > 0) newState.deck.shift();
-		else console.error("Not enough cards to burn before river!");
-		if (newState.deck.length > 0) {
-			const card = newState.deck.shift();
-			if (card) {
-				newState.communityCards.push(card);
-				newState.handHistory.push(`River: ${card.rank}${card.suit}`);
+			if (flopCards.length > 0) {
+				draft.handHistory.push(
+					`Flop: ${flopCards.map((c) => c.rank + c.suit).join(" ")}`,
+				);
 			}
-		} else console.error("Deck ran out dealing river!");
-		newState.phase = "river";
-	}
+			draft.phase = "flop";
+		}
 
-	newState.phase = "river";
-	newState.currentPlayerSeat = null;
-	newState.lastUpdateTime = Date.now();
+		if (draft.phase === "flop" && draft.communityCards.length < 4) {
+			if (draft.deck.length > 0) draft.deck.shift();
+			else console.error("Not enough cards to burn before turn!");
+			if (draft.deck.length > 0) {
+				const card = draft.deck.shift();
+				if (card) {
+					draft.communityCards.push(card);
+					draft.handHistory.push(`Turn: ${card.rank}${card.suit}`);
+				}
+			} else console.error("Deck ran out dealing turn!");
+			draft.phase = "turn";
+		}
 
-	return newState;
+		if (draft.phase === "turn" && draft.communityCards.length < 5) {
+			if (draft.deck.length > 0) draft.deck.shift();
+			else console.error("Not enough cards to burn before river!");
+			if (draft.deck.length > 0) {
+				const card = draft.deck.shift();
+				if (card) {
+					draft.communityCards.push(card);
+					draft.handHistory.push(`River: ${card.rank}${card.suit}`);
+				}
+			} else console.error("Deck ran out dealing river!");
+			draft.phase = "river";
+		}
+
+		if (draft.communityCards.length >= 5) {
+			draft.phase = "river";
+		}
+
+		draft.currentPlayerSeat = null;
+		draft.lastUpdateTime = Date.now();
+	});
 }
 
 export function isBettingRoundOver(gameState: GameState): boolean {
@@ -1367,155 +1374,156 @@ function calculatePots(playerStates: Record<string, PlayerState>): PotInfo[] {
 }
 
 function determineWinner(gameState: GameState): GameState {
-	const newState = structuredClone(gameState);
-	newState.phase = "showdown";
-	newState.handHistory.push("--- Showdown ---");
+	return produce(gameState, (draft) => {
+		draft.phase = "showdown";
+		draft.handHistory.push("--- Showdown ---");
 
-	const playersToShowdown = Object.values(newState.playerStates).filter(
-		(p) => !p.isFolded && !p.isSittingOut && p.totalBet > 0,
-	);
-
-	if (playersToShowdown.length === 1) {
-		const winner = playersToShowdown[0];
-		const totalPot = Object.values(newState.playerStates).reduce(
-			(sum, p) => sum + p.totalBet,
-			0,
+		const playersToShowdown = Object.values(draft.playerStates).filter(
+			(p) => !p.isFolded && !p.isSittingOut && p.totalBet > 0,
 		);
-		winner.stack += totalPot;
-		newState.handHistory.push(
-			`Seat ${winner.seatNumber} wins ${totalPot} (uncontested).`,
-		);
-		newState.pot = 0;
-	} else if (playersToShowdown.length > 1) {
-		const results: Record<string, HandEvaluationResult> = {};
-		newState.handHistory.push("Evaluating hands...");
 
-		for (const p of playersToShowdown) {
-			if (p.hand.length === 2) {
-				results[p.userId] = evaluateHand(p.hand, newState.communityCards);
-				newState.handHistory.push(
-					`Seat ${p.seatNumber} shows ${p.hand.map((c) => c.rank + c.suit).join(" ")} - ${results[p.userId].rankName} (${results[p.userId].bestHand.map((c) => c.rank + c.suit).join(" ")})`,
-				);
-			} else {
-				newState.handHistory.push(
-					`Seat ${p.seatNumber} mucks (Error: No hole cards found?).`,
-				);
-				results[p.userId] = {
-					rankValue: HandRank.HIGH_CARD,
-					rankName: "Mucked/Error",
-					bestHand: [],
-					kickers: [],
-				};
-			}
-		}
-
-		const pots = calculatePots(newState.playerStates);
-		let totalAwarded = 0;
-
-		newState.handHistory.push("--- Pot Distribution ---");
-
-		for (let index = 0; index < pots.length; index++) {
-			const pot = pots[index];
-			const potName = pots.length > 1 ? `Side Pot ${index + 1}` : "Main Pot";
-			newState.handHistory.push(
-				`${potName} (${pot.amount}) - Eligible: ${pot.eligiblePlayers
-					.map((uid) => `Seat ${newState.playerStates[uid].seatNumber}`)
-					.join(", ")}`,
+		if (playersToShowdown.length === 1) {
+			const winnerId = playersToShowdown[0].userId;
+			const winner = draft.playerStates[winnerId];
+			const totalPot = Object.values(draft.playerStates).reduce(
+				(sum, p) => sum + p.totalBet,
+				0,
 			);
+			winner.stack += totalPot;
+			draft.handHistory.push(
+				`Seat ${winner.seatNumber} wins ${totalPot} (uncontested).`,
+			);
+			draft.pot = 0;
+		} else if (playersToShowdown.length > 1) {
+			const results: Record<string, HandEvaluationResult> = {};
+			draft.handHistory.push("Evaluating hands...");
 
-			let bestRankValueInPot = -1;
-			let winnersInPot: string[] = [];
-			let winningKickersInPot: number[] = [];
-			let winningHandDesc = "";
-
-			for (const userId of pot.eligiblePlayers) {
-				if (!results[userId]) continue;
-
-				const result = results[userId];
-
-				if (result.rankValue > bestRankValueInPot) {
-					bestRankValueInPot = result.rankValue;
-					winnersInPot = [userId];
-					winningKickersInPot = result.kickers;
-					winningHandDesc = result.rankName;
-				} else if (result.rankValue === bestRankValueInPot) {
-					const kickerComparison = compareKickers(
-						result.kickers,
-						winningKickersInPot,
+			for (const p of playersToShowdown) {
+				if (p.hand.length === 2) {
+					results[p.userId] = evaluateHand(p.hand, draft.communityCards);
+					draft.handHistory.push(
+						`Seat ${p.seatNumber} shows ${p.hand.map((c) => c.rank + c.suit).join(" ")} - ${results[p.userId].rankName} (${results[p.userId].bestHand.map((c) => c.rank + c.suit).join(" ")})`,
 					);
-					if (kickerComparison > 0) {
+				} else {
+					draft.handHistory.push(
+						`Seat ${p.seatNumber} mucks (Error: No hole cards found?).`,
+					);
+					results[p.userId] = {
+						rankValue: HandRank.HIGH_CARD,
+						rankName: "Mucked/Error",
+						bestHand: [],
+						kickers: [-1],
+					};
+				}
+			}
+
+			const pots = calculatePots(draft.playerStates);
+			let totalAwarded = 0;
+
+			draft.handHistory.push("--- Pot Distribution ---");
+
+			for (let index = 0; index < pots.length; index++) {
+				const pot = pots[index];
+				const potName = pots.length > 1 ? `Side Pot ${index + 1}` : "Main Pot";
+				draft.handHistory.push(
+					`${potName} (${pot.amount}) - Eligible: ${pot.eligiblePlayers
+						.map((uid) => `Seat ${draft.playerStates[uid].seatNumber}`)
+						.join(", ")}`,
+				);
+
+				let bestRankValueInPot = -1;
+				let winnersInPot: string[] = [];
+				let winningKickersInPot: number[] = [];
+				let winningHandDesc = "";
+
+				for (const userId of pot.eligiblePlayers) {
+					if (!results[userId]) continue;
+
+					const result = results[userId];
+
+					if (result.rankValue > bestRankValueInPot) {
+						bestRankValueInPot = result.rankValue;
 						winnersInPot = [userId];
 						winningKickersInPot = result.kickers;
-					} else if (kickerComparison === 0) {
-						winnersInPot.push(userId);
+						winningHandDesc = result.rankName;
+					} else if (result.rankValue === bestRankValueInPot) {
+						const kickerComparison = compareKickers(
+							result.kickers,
+							winningKickersInPot,
+						);
+						if (kickerComparison > 0) {
+							winnersInPot = [userId];
+							winningKickersInPot = result.kickers;
+						} else if (kickerComparison === 0) {
+							winnersInPot.push(userId);
+						}
 					}
+				}
+
+				if (winnersInPot.length > 0) {
+					const amountPerWinner = Math.floor(pot.amount / winnersInPot.length);
+					let remainder = pot.amount % winnersInPot.length;
+
+					const sortedWinners = winnersInPot.sort((a, b) => {
+						const seatA = draft.playerStates[a].seatNumber;
+						const seatB = draft.playerStates[b].seatNumber;
+						const maxSeats = Math.max(
+							...Object.values(draft.playerStates).map((p) => p.seatNumber),
+							10,
+						);
+						const aRel = (seatA - draft.smallBlindSeat + maxSeats) % maxSeats;
+						const bRel = (seatB - draft.smallBlindSeat + maxSeats) % maxSeats;
+						return aRel - bRel;
+					});
+
+					for (const winnerId of sortedWinners) {
+						const winnerState = draft.playerStates[winnerId];
+						let award = amountPerWinner;
+						if (remainder > 0) {
+							award += 1;
+							remainder -= 1;
+						}
+						winnerState.stack += award;
+						totalAwarded += award;
+						draft.handHistory.push(
+							`Seat ${winnerState.seatNumber} wins ${award} from ${potName} with ${winningHandDesc}`,
+						);
+					}
+				} else {
+					draft.handHistory.push(
+						`Error: No eligible winners found for ${potName}. Pot amount ${pot.amount} unawarded.`,
+					);
 				}
 			}
+			draft.pot = 0;
 
-			if (winnersInPot.length > 0) {
-				const amountPerWinner = Math.floor(pot.amount / winnersInPot.length);
-				let remainder = pot.amount % winnersInPot.length;
-
-				const sortedWinners = winnersInPot.sort((a, b) => {
-					const seatA = newState.playerStates[a].seatNumber;
-					const seatB = newState.playerStates[b].seatNumber;
-					const maxSeats = Math.max(
-						...Object.values(newState.playerStates).map((p) => p.seatNumber),
-						10,
-					);
-					const aRel = (seatA - newState.smallBlindSeat + maxSeats) % maxSeats;
-					const bRel = (seatB - newState.smallBlindSeat + maxSeats) % maxSeats;
-					return aRel - bRel;
-				});
-
-				for (const winnerId of sortedWinners) {
-					const winnerState = newState.playerStates[winnerId];
-					let award = amountPerWinner;
-					if (remainder > 0) {
-						award += 1;
-						remainder -= 1;
-					}
-					winnerState.stack += award;
-					totalAwarded += award;
-					newState.handHistory.push(
-						`Seat ${winnerState.seatNumber} wins ${award} from ${potName} with ${winningHandDesc}`,
-					);
-				}
-			} else {
-				newState.handHistory.push(
-					`Error: No eligible winners found for ${potName}.`,
+			const totalPotFromBets = Object.values(draft.playerStates).reduce(
+				(sum, p) => sum + p.totalBet,
+				0,
+			);
+			if (totalAwarded !== totalPotFromBets) {
+				console.warn(
+					`Pot distribution discrepancy: Total Pot (${totalPotFromBets}), Total Awarded (${totalAwarded}). Remainder: ${totalPotFromBets - totalAwarded}`,
 				);
 			}
+		} else {
+			draft.handHistory.push("Error: No players eligible for showdown.");
+			draft.pot = 0;
 		}
-		newState.pot = 0;
 
-		const totalPotFromBets = Object.values(newState.playerStates).reduce(
-			(sum, p) => sum + p.totalBet,
-			0,
-		);
-		if (totalAwarded !== totalPotFromBets) {
-			console.warn(
-				`Pot distribution discrepancy: Total Pot (${totalPotFromBets}), Total Awarded (${totalAwarded}). Remainder: ${totalPotFromBets - totalAwarded}`,
-			);
+		for (const p of Object.values(draft.playerStates)) {
+			p.currentBet = 0;
+			p.totalBet = 0;
+			p.hand = [];
+			p.hasActed = false;
+			p.isFolded = false;
 		}
-	} else {
-		newState.handHistory.push("Error: No players eligible for showdown.");
-		newState.pot = 0;
-	}
 
-	for (const p of Object.values(newState.playerStates)) {
-		p.currentBet = 0;
-		p.totalBet = 0;
-		p.hand = [];
-		p.hasActed = false;
-		p.isFolded = false;
-	}
-
-	newState.phase = "end_hand";
-	newState.currentPlayerSeat = null;
-	newState.lastUpdateTime = Date.now();
-	newState.handHistory.push("--- Hand End ---");
-	return newState;
+		draft.phase = "end_hand";
+		draft.currentPlayerSeat = null;
+		draft.lastUpdateTime = Date.now();
+		draft.handHistory.push("--- Hand End ---");
+	});
 }
 
 export async function performAction(
@@ -1536,7 +1544,7 @@ export async function performAction(
 		throw new Error(`Invalid action: ${validation.message}`);
 	}
 
-	let newState = applyAction(
+	let nextState = applyAction(
 		currentGameState,
 		validation.playerState,
 		action.action,
@@ -1546,89 +1554,108 @@ export async function performAction(
 	);
 
 	while (true) {
-		const activePlayers = Object.values(newState.playerStates).filter(
+		const activePlayers = Object.values(nextState.playerStates).filter(
 			(p) => !p.isFolded && !p.isSittingOut,
 		);
 
 		if (activePlayers.length <= 1) {
-			newState.handHistory.push(
-				activePlayers.length === 1
-					? "Only one player remains."
-					: "No players remain.",
-			);
-			newState = determineWinner(newState);
+			nextState = produce(nextState, (draft) => {
+				draft.handHistory.push(
+					activePlayers.length === 1
+						? "Only one player remains."
+						: "No players remain.",
+				);
+			});
+			nextState = determineWinner(nextState);
 			break;
 		}
 
-		const roundOver = isBettingRoundOver(newState);
+		const roundOver = isBettingRoundOver(nextState);
 
 		if (roundOver) {
-			newState.handHistory.push("Betting round concluded.");
-			newState.currentPlayerSeat = null;
+			nextState = produce(nextState, (draft) => {
+				draft.handHistory.push("Betting round concluded.");
+				draft.currentPlayerSeat = null;
+			});
 
 			const playersWhoCanAct = activePlayers.filter((p) => !p.isAllIn);
 
 			if (playersWhoCanAct.length === 0) {
 				if (
-					newState.phase !== "river" &&
-					newState.phase !== "showdown" &&
-					newState.phase !== "end_hand"
+					nextState.phase !== "river" &&
+					nextState.phase !== "showdown" &&
+					nextState.phase !== "end_hand"
 				) {
-					newState.handHistory.push(
-						"All remaining players are all-in. Dealing remaining board...",
-					);
-					newState = dealRemainingBoard(newState);
+					nextState = produce(nextState, (draft) => {
+						draft.handHistory.push(
+							"All remaining players are all-in. Dealing remaining board...",
+						);
+					});
+					nextState = dealRemainingBoard(nextState);
 				}
-				newState = determineWinner(newState);
+				nextState = determineWinner(nextState);
 				break;
 			}
-			if (newState.phase === "river") {
-				newState = determineWinner(newState);
+
+			if (nextState.phase === "river") {
+				nextState = determineWinner(nextState);
 				break;
 			}
-			if (newState.phase !== "showdown" && newState.phase !== "end_hand") {
-				newState = dealCommunityCards(newState);
-				if (newState.currentPlayerSeat !== null) {
+
+			if (nextState.phase !== "showdown" && nextState.phase !== "end_hand") {
+				nextState = dealCommunityCards(nextState);
+				if (nextState.currentPlayerSeat !== null) {
 					break;
 				}
 			} else {
 				break;
 			}
 		} else {
-			const lastActorSeat = newState.lastActionPlayerSeat;
+			const lastActorSeat = nextState.lastActionPlayerSeat;
 			const seatToStartSearchFrom =
 				lastActorSeat ??
-				(newState.phase === "preflop"
-					? newState.bigBlindSeat
-					: newState.dealerSeat);
+				(nextState.phase === "preflop"
+					? nextState.bigBlindSeat
+					: nextState.dealerSeat);
 
-			newState.currentPlayerSeat = getNextActivePlayerSeat(
-				newState,
+			const nextPlayerSeat = getNextActivePlayerSeat(
+				nextState,
 				seatToStartSearchFrom,
 			);
 
-			if (newState.currentPlayerSeat) {
-				newState.handHistory.push(
-					`Seat ${newState.currentPlayerSeat} is next to act.`,
-				);
-			} else {
-				console.error(
-					"CRITICAL ERROR: Betting round appears ongoing, but cannot determine next player.",
-					{
-						phase: newState.phase,
-						lastActionPlayerSeat: lastActorSeat,
-						playerStates: newState.playerStates,
-					},
-				);
-				newState.handHistory.push(
-					"Error determining next player. Ending hand.",
-				);
-				newState = determineWinner(newState);
+			nextState = produce(nextState, (draft) => {
+				draft.currentPlayerSeat = nextPlayerSeat;
+				if (draft.currentPlayerSeat) {
+					draft.handHistory.push(
+						`Seat ${draft.currentPlayerSeat} is next to act.`,
+					);
+				} else {
+					console.error(
+						"CRITICAL ERROR: Betting round appears ongoing, but cannot determine next player.",
+						{
+							phase: draft.phase,
+							lastActionPlayerSeat: lastActorSeat,
+							playerStates: draft.playerStates,
+						},
+					);
+					draft.handHistory.push("Error determining next player. Ending hand.");
+
+					draft.phase = "showdown";
+				}
+			});
+
+			if (
+				nextState.currentPlayerSeat === null &&
+				nextState.phase === "showdown"
+			) {
+				nextState = determineWinner(nextState);
 			}
+
 			break;
 		}
 	}
 
-	newState.lastUpdateTime = Date.now();
-	return newState;
+	return produce(nextState, (draft) => {
+		draft.lastUpdateTime = Date.now();
+	});
 }
