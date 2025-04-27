@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Filter } from "bad-words";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 interface ChatMessage {
@@ -42,6 +42,19 @@ export function RoomChat({
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const filter = useRef(new Filter());
 
+	useEffect(() => {
+		if (scrollAreaRef.current) {
+			const scrollElement = scrollAreaRef.current.querySelector(
+				"[data-radix-scroll-area-viewport]",
+			);
+			if (scrollElement) {
+				scrollElement.scrollTop = scrollElement.scrollHeight;
+			} else {
+				scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+			}
+		}
+	}, [messages]);
+
 	const handleSend = async () => {
 		const trimmedMessage = messageInput.trim();
 		if (!trimmedMessage) return;
@@ -73,14 +86,14 @@ export function RoomChat({
 	);
 
 	return (
-		<div className="flex h-full flex-col rounded-lg border p-4">
+		<div className="flex h-full flex-col overflow-hidden rounded-lg border p-4">
 			<div className="mb-2 flex items-center gap-2">
 				<h2 className="font-medium">Chat</h2>
 				<Badge variant="secondary" className="text-sm">
 					{filterProfanity ? "Profanity Filter On" : "Unfiltered"}
 				</Badge>
 			</div>
-			<ScrollArea ref={scrollAreaRef} className="flex-grow" type="always">
+			<ScrollArea ref={scrollAreaRef} className="h-0 flex-grow" type="always">
 				<div className="space-y-1 pr-4 pb-4">
 					{groupedMessages.map((msg) => (
 						<div
@@ -94,7 +107,6 @@ export function RoomChat({
 									className={`mb-1 text-muted-foreground text-xs ${msg.isCurrentUser ? "mr-2 text-right" : "ml-2 text-left"}`}
 								>
 									{msg.username}
-									{msg.isCurrentUser ? " (You)" : ""}
 								</span>
 							)}
 							<div
@@ -104,7 +116,7 @@ export function RoomChat({
 										: "bg-muted"
 								}`}
 							>
-								<p className="break-words text-sm">{msg.message}</p>{" "}
+								<p className="break-words text-sm">{msg.message}</p>
 							</div>
 						</div>
 					))}
