@@ -1,6 +1,6 @@
 import { HandHistory } from "@/components/hand-history";
-import Loader from "@/components/loader";
 import { RoomChat } from "@/components/room-chat";
+import { RoomSkeleton } from "@/components/room-skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -686,11 +686,11 @@ function RouteComponent() {
 	};
 
 	if (isSessionPending || (roomId && isRoomLoading)) {
-		return <Loader />;
+		return <RoomSkeleton />;
 	}
 
 	if (!session?.user) {
-		return <Loader />;
+		return <RoomSkeleton />;
 	}
 
 	if (roomId && !isRoomLoading && !initialRoomData) {
