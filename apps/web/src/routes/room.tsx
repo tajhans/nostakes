@@ -196,7 +196,7 @@ const CardComponent: React.FC<CardComponentProps> = ({
 
 	useEffect(() => {
 		setIsLoaded(false);
-	}, [rank, suit, size]);
+	}, []);
 
 	return (
 		<div

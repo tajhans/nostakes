@@ -6,6 +6,7 @@ import { performAction } from "./poker";
 import {
 	getAllRoomMembers,
 	getGameState,
+	getRecentMessages,
 	redis,
 	setGameState,
 	setRoomMember,
@@ -285,6 +286,15 @@ export function handleWebSocket(
 						},
 					};
 					ws.send(JSON.stringify(userSpecificGameStateUpdate));
+				}
+
+				const recentMessages = await getRecentMessages(roomId);
+				if (ws.readyState === 1) {
+					const historyMessage: MessageHistory = {
+						type: "history",
+						messages: recentMessages,
+					};
+					ws.send(JSON.stringify(historyMessage));
 				}
 
 				await broadcastRoomState(roomId);

@@ -192,11 +192,15 @@ export async function getRecentMessages(
 	roomId: string,
 ): Promise<ChatMessage[]> {
 	try {
-		const messagesJson = await redis.lrange(`room:${roomId}:messages`, 0, -1);
+		const messagesData = await redis.lrange(`room:${roomId}:messages`, 0, -1);
 
-		return messagesJson.map((msgStr) =>
-			JSON.parse(msgStr as string),
-		) as ChatMessage[];
+		return messagesData
+			.map((msgData) => {
+				if (typeof msgData === "object" && msgData !== null) {
+					return msgData as ChatMessage;
+				}
+			})
+			.filter((msg): msg is ChatMessage => msg !== null);
 	} catch (error) {
 		console.error("Failed to get recent messages:", error);
 		return [];
