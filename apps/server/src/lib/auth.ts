@@ -1,11 +1,13 @@
 import { betterAuth } from "better-auth";
+import type { BetterAuthOptions } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { username } from "better-auth/plugins";
+import { customSession, username } from "better-auth/plugins";
 import { db } from "../db";
 import * as schema from "../db/schema/auth";
 import { sendVerificationEmail } from "./email";
+import { getUserImageBase64 } from "./utils";
 
-export const auth = betterAuth({
+const options = {
 	database: drizzleAdapter(db, {
 		provider: "pg",
 		schema: schema,
@@ -31,4 +33,23 @@ export const auth = betterAuth({
 		},
 	},
 	plugins: [username()],
+} satisfies BetterAuthOptions;
+
+export const auth = betterAuth({
+	...options,
+	plugins: [
+		username(),
+		...(options.plugins ?? []),
+		customSession(async ({ user, session }) => {
+			const imageBase64 = await getUserImageBase64(session.userId);
+
+			return {
+				user: {
+					...user,
+					imageBase64,
+				},
+				session,
+			};
+		}, options),
+	],
 });

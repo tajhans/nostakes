@@ -65,7 +65,6 @@ export default function CreateRoomForm() {
 			filterProfanity: false,
 		},
 		onSubmit: async ({ value }) => {
-			console.log(value);
 			await createRoom.mutateAsync(value);
 		},
 	});

@@ -1,5 +1,5 @@
+import { AccountSkeleton } from "@/components/account-skeleton";
 import { ImageUpload } from "@/components/image-upload";
-import Loader from "@/components/loader";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { trpcClient } from "@/utils/trpc";
@@ -42,7 +42,7 @@ function RouteComponent() {
 	}, [session, isPending, navigate]);
 
 	if (isPending) {
-		return <Loader />;
+		return <AccountSkeleton />;
 	}
 
 	if (!session?.user) {

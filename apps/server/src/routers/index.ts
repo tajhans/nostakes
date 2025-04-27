@@ -1,7 +1,8 @@
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
+import { getPlaiceholder } from "plaiceholder";
+import sharp from "sharp";
 import { z } from "zod";
 import { db } from "../db";
 import { user } from "../db/schema/auth";
@@ -74,6 +75,20 @@ async function getUserActiveRoom(userId: string) {
 		.limit(1);
 
 	return activeRoom;
+}
+
+function extractKeyFromUrl(imageUrl: string | null): string | null {
+	if (!imageUrl) return null;
+	try {
+		const url = new URL(imageUrl);
+		const pathParts = url.pathname.split("/");
+		if (pathParts.length > 2) {
+			return pathParts.slice(2).join("/");
+		}
+	} catch (e) {
+		console.error("Error parsing image URL:", e);
+	}
+	return null;
 }
 
 export const appRouter = router({
@@ -457,69 +472,136 @@ export const appRouter = router({
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
+			const userId = ctx.session.user.id;
+			const username = ctx.session.user.username;
+
+			if (!username) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message:
+						"Username is required to set a profile picture. Please ensure your profile has a username.",
+				});
+			}
+
 			const userProfile = await db
-				.select({ image: user.image })
+				.select({ image: user.image, imageBase64: user.imageBase64 })
 				.from(user)
-				.where(eq(user.id, ctx.session.user.id))
+				.where(eq(user.id, userId))
 				.limit(1)
 				.then((rows) => rows[0]);
 
-			if (userProfile?.image) {
-				try {
-					const urlParts = userProfile.image.split("/");
-					const existingKey = urlParts[urlParts.length - 1];
-					if (existingKey) {
-						await s3Client.send(
-							new DeleteObjectCommand({
-								Bucket: "nostakes",
-								Key: existingKey,
-							}),
-						);
-						console.log(`Deleted old image: ${existingKey}`);
-					}
-				} catch (error) {
-					console.error("Failed to delete old image from R2:", error);
-				}
-			}
+			const oldImageUrl = userProfile?.image ?? null;
+			const oldImageBase64 = userProfile?.imageBase64 ?? null;
+			const oldKey = extractKeyFromUrl(oldImageUrl);
 
-			let imageUrl: string | null = null;
+			let newImageUrl: string | null = null;
+			let newImageBase64: string | null = null;
+			let newKey: string | null = null;
+
 			if (input.image) {
-				const buffer = Buffer.from(
-					input.image.replace(/^data:image\/\w+;base64,/, ""),
-					"base64",
-				);
-				const key = `${nanoid()}.jpg`;
-
 				try {
+					const buffer = Buffer.from(
+						input.image.replace(/^data:image\/\w+;base64,/, ""),
+						"base64",
+					);
+
+					const webpBuffer = await sharp(buffer).webp().toBuffer();
+					const { base64: plaiceholderBase64 } =
+						await getPlaiceholder(webpBuffer);
+					newImageBase64 = plaiceholderBase64;
+
+					newKey = `${username}.webp`;
+
 					await s3Client.send(
 						new PutObjectCommand({
 							Bucket: "nostakes",
-							Key: key,
-							Body: buffer,
-							ContentType: "image/jpeg",
+							Key: newKey,
+							Body: webpBuffer,
+							ContentType: "image/webp",
 						}),
 					);
 
-					imageUrl = `https://image.nostakes.poker/nostakes/${key}`;
-					console.log(`Uploaded new image: ${imageUrl}`);
+					newImageUrl = `https://image.nostakes.poker/nostakes/${newKey}`;
+					console.log(`Uploaded new image: ${newImageUrl}`);
+					console.log(`Generated placeholder for ${newKey}`);
 				} catch (error) {
-					console.error("Failed to upload image to R2:", error);
+					console.error(
+						"Failed to process, upload, or generate placeholder:",
+						error,
+					);
+
+					newImageUrl = oldImageUrl;
+					newImageBase64 = oldImageBase64;
+					newKey = oldKey;
 					throw new TRPCError({
 						code: "INTERNAL_SERVER_ERROR",
-						message: "Failed to upload profile picture.",
+						message: "Failed to update profile picture.",
+						cause: error,
 					});
+				}
+			} else {
+				newImageUrl = null;
+				newImageBase64 = null;
+				newKey = null;
+				console.log(`User ${username} is removing their profile picture.`);
+			}
+
+			if (oldKey && oldKey !== newKey) {
+				try {
+					console.log(`Attempting to delete old image with key: ${oldKey}`);
+					await s3Client.send(
+						new DeleteObjectCommand({
+							Bucket: "nostakes",
+							Key: oldKey,
+						}),
+					);
+					console.log(`Successfully deleted old image: ${oldKey}`);
+				} catch (error) {
+					console.error(`Failed to delete old image ${oldKey}:`, error);
+				}
+			} else if (oldKey && oldKey === newKey) {
+				console.log(
+					`Old key ${oldKey} is the same as the new key. Skipping deletion.`,
+				);
+			} else if (oldKey && !input.image) {
+				try {
+					console.log(
+						`Attempting to delete image due to removal request: ${oldKey}`,
+					);
+					await s3Client.send(
+						new DeleteObjectCommand({
+							Bucket: "nostakes",
+							Key: oldKey,
+						}),
+					);
+					console.log(`Successfully deleted image on removal: ${oldKey}`);
+				} catch (error) {
+					console.error(
+						`Failed to delete image ${oldKey} during removal:`,
+						error,
+					);
 				}
 			}
 
-			await db
-				.update(user)
-				.set({
-					image: imageUrl,
-					updatedAt: new Date(),
-				})
-				.where(eq(user.id, ctx.session.user.id));
+			if (oldImageUrl !== newImageUrl || oldImageBase64 !== newImageBase64) {
+				await db
+					.update(user)
+					.set({
+						image: newImageUrl,
+						imageBase64: newImageBase64,
+						updatedAt: new Date(),
+					})
+					.where(eq(user.id, userId));
+				console.log(
+					`Updated database for user ${userId} with image URL: ${newImageUrl} and placeholder.`,
+				);
+			} else {
+				console.log(
+					`Image URL and placeholder for user ${userId} haven't changed. Skipping database update.`,
+				);
+			}
 
-			return { imageUrl };
+			return { imageUrl: newImageUrl };
 		}),
 
 	startGame: protectedProcedure

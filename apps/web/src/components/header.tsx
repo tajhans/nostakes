@@ -3,12 +3,14 @@ import { authClient } from "@/lib/auth-client";
 import { Link } from "@tanstack/react-router";
 import { User } from "lucide-react";
 import { ModeToggle } from "./mode-toggle";
+import { ProfilePicture } from "./profile-picture";
 
 export function Header() {
 	const { data: session } = authClient.useSession();
 
 	const userImage = session?.user?.image || undefined;
-	const username = session?.user?.username || "User avatar";
+	const userBase64 = session?.user?.imageBase64 || undefined;
+	const username = session?.user?.username || "User";
 
 	return (
 		<header className="w-full border-b">
@@ -23,17 +25,13 @@ export function Header() {
 
 				<div className="flex justify-end">
 					<Link to="/account" className="transition-opacity hover:opacity-80">
-						{userImage ? (
-							<img
-								src={userImage}
-								alt={username}
-								className="h-9 w-9 rounded-full"
-							/>
-						) : (
-							<Button variant="ghost" size="icon">
-								<User />
-							</Button>
-						)}
+						<ProfilePicture
+							imageUrl={userImage}
+							imageBase64={userBase64}
+							alt={`${username}'s avatar`}
+							username={username}
+							size="md"
+						/>
 					</Link>
 				</div>
 			</div>
