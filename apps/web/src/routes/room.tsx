@@ -15,6 +15,7 @@ import { trpc } from "@/utils/trpc";
 import { trpcClient } from "@/utils/trpc";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { type Operation, applyPatch } from "fast-json-patch";
 import { Check, Circle, CircleDot, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -81,7 +82,7 @@ interface GameState {
 	roomConfig: { smallBlind: number; bigBlind: number; ante: number };
 }
 
-type ClientGameState = Omit<GameState, "deck">;
+type ClientGameState = GameState;
 
 interface ChatMessage {
 	type: "chat";
@@ -129,6 +130,11 @@ interface GameStateUpdate {
 	gameState: ClientGameState;
 }
 
+interface GameStatePatchMessage {
+	type: "game_state_patch";
+	patches: Operation[];
+}
+
 type ClientPokerAction =
 	| { type: "action"; action: "fold" }
 	| { type: "action"; action: "check" }
@@ -147,6 +153,7 @@ type ServerWebSocketMessage =
 	| RoomStateUpdate
 	| RoomClosed
 	| GameStateUpdate
+	| GameStatePatchMessage
 	| ErrorMessage;
 
 interface RoomData {
@@ -291,6 +298,7 @@ function RouteComponent() {
 		},
 		onSuccess: () => {
 			toast.success("Room closed successfully");
+			navigate({ to: "/" });
 		},
 		onError: (error) => {
 			toast.error(`Failed to close room: ${error.message}`);
@@ -391,7 +399,6 @@ function RouteComponent() {
 			console.log("WebSocket connected");
 			if (wsRef.current === ws) {
 				setIsConnected(true);
-
 				if (!hasShownInitialConnectToast.current) {
 					toast.success("Connected to room server.");
 					hasShownInitialConnectToast.current = true;
@@ -404,7 +411,7 @@ function RouteComponent() {
 
 			try {
 				const data: ServerWebSocketMessage = JSON.parse(event.data);
-				console.log("WS Message Received:", data);
+				console.log("WS Message Received:", data.type);
 
 				switch (data.type) {
 					case "chat":
@@ -446,7 +453,7 @@ function RouteComponent() {
 						navigate({ to: "/" });
 						break;
 					case "game_state":
-						console.log("Game State Update Received:", data.gameState);
+						console.log("Full Game State Update Received");
 						setGameState(data.gameState);
 						if (
 							data.gameState.phase !== gameState?.phase ||
@@ -454,6 +461,43 @@ function RouteComponent() {
 						) {
 							setBetAmount(0);
 						}
+						break;
+					case "game_state_patch":
+						console.log(
+							`Game State Patch Received (${data.patches.length} operations)`,
+						);
+						setGameState((currentState) => {
+							if (!currentState) {
+								console.warn(
+									"Received patches but current state is null. Ignoring patches.",
+								);
+								return null;
+							}
+							try {
+								const { newDocument } = applyPatch(
+									currentState,
+									data.patches,
+									true,
+									false,
+								);
+								const phaseChanged = data.patches.some(
+									(p) => p.path === "/phase",
+								);
+								const turnChanged = data.patches.some(
+									(p) => p.path === "/currentPlayerSeat",
+								);
+								if (phaseChanged || turnChanged) {
+									setBetAmount(0);
+								}
+								return newDocument as ClientGameState;
+							} catch (error) {
+								console.error("Failed to apply game state patches:", error);
+								toast.error(
+									"Failed to update game state. State might be out of sync.",
+								);
+								return currentState;
+							}
+						});
 						break;
 					case "error":
 						toast.error(`Server error: ${data.message}`);
@@ -479,6 +523,7 @@ function RouteComponent() {
 					"Reconnecting or dependencies changed",
 					"Prerequisites not met",
 					"New connection established",
+					"Configuration error",
 				];
 				if (
 					event.code !== 1000 &&
@@ -489,11 +534,10 @@ function RouteComponent() {
 					toast.error(
 						`Connection lost unexpectedly (Code: ${event.code}). Attempting to reconnect...`,
 					);
-
 					hasShownInitialConnectToast.current = false;
 				} else if (event.reason && !expectedReasons.includes(event.reason)) {
 					toast.info(`Disconnected: ${event.reason}`);
-				} else if (event.code !== 1000) {
+				} else if (event.code !== 1000 && event.code !== 1001) {
 					toast.info(`Disconnected (Code: ${event.code})`);
 				}
 			} else {
@@ -539,8 +583,6 @@ function RouteComponent() {
 		queryClient,
 		isSessionPending,
 		isRoomLoading,
-		gameState?.currentPlayerSeat,
-		gameState?.phase,
 	]);
 
 	useEffect(() => {
@@ -575,34 +617,44 @@ function RouteComponent() {
 		const canRaise =
 			currentBet > 0 && playerStack > currentBet - playerCurrentBet;
 
-		const minBet = Math.min(initialRoomData.bigBlind, playerStack);
-		const minRaiseTo = Math.min(
+		const minBetAmount = Math.min(initialRoomData.bigBlind, playerStack);
+		const minRaiseToAmount = Math.min(
 			currentBet + minRaiseAmount,
 			playerStack + playerCurrentBet,
 		);
-		const maxBetOrRaise = playerStack + playerCurrentBet;
+		const maxBetOrRaiseAmount = playerStack + playerCurrentBet;
 
 		let adjustedBetAmount = betAmount;
 		let adjustmentNeeded = false;
 
-		if (canBet && betAmount > 0 && betAmount < minBet) {
-			if (betAmount !== playerStack) {
-				adjustedBetAmount = minBet;
+		if (canBet && betAmount > 0) {
+			if (betAmount < minBetAmount && betAmount !== playerStack) {
+				adjustedBetAmount = minBetAmount;
+				adjustmentNeeded = true;
+			} else if (betAmount > playerStack) {
+				adjustedBetAmount = playerStack;
 				adjustmentNeeded = true;
 			}
-		} else if (canRaise && betAmount > currentBet && betAmount < minRaiseTo) {
-			if (betAmount !== maxBetOrRaise) {
-				adjustedBetAmount = minRaiseTo;
+		} else if (canRaise && betAmount > currentBet) {
+			if (betAmount < minRaiseToAmount && betAmount !== maxBetOrRaiseAmount) {
+				adjustedBetAmount = minRaiseToAmount;
+				adjustmentNeeded = true;
+			} else if (betAmount > maxBetOrRaiseAmount) {
+				adjustedBetAmount = maxBetOrRaiseAmount;
+				adjustmentNeeded = true;
+			}
+		} else if (
+			betAmount > 0 &&
+			!canBet &&
+			(!canRaise || betAmount <= currentBet)
+		) {
+			if (canRaise) {
+				adjustedBetAmount = minRaiseToAmount;
 				adjustmentNeeded = true;
 			}
 		}
 
-		if ((canBet || canRaise) && betAmount > maxBetOrRaise) {
-			adjustedBetAmount = maxBetOrRaise;
-			adjustmentNeeded = true;
-		}
-
-		if (adjustmentNeeded) {
+		if (adjustmentNeeded && adjustedBetAmount !== betAmount) {
 			console.log(
 				`Adjusting bet amount from ${betAmount} to ${adjustedBetAmount}`,
 			);
@@ -612,7 +664,7 @@ function RouteComponent() {
 
 	const sendMessage = (message: ClientChatMessage | ClientPokerAction) => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			console.log("Sending WS Message:", message);
+			console.log("Sending WS Message:", message.type);
 			wsRef.current.send(JSON.stringify(message));
 		} else {
 			console.warn("Attempted to send message, but WebSocket is not open.");
@@ -793,12 +845,12 @@ function RouteComponent() {
 		isMyTurn && currentBet > 0 && playerStack > currentBet - playerCurrentBet;
 
 	const callAmount = Math.min(currentBet - playerCurrentBet, playerStack);
-	const minBet = Math.max(1, Math.min(room.bigBlind, playerStack));
-	const minRaiseTo = Math.min(
+	const minBetValue = Math.max(1, Math.min(room.bigBlind, playerStack)); // Ensure min bet is at least 1
+	const minRaiseToValue = Math.min(
 		currentBet + minRaiseAmount,
 		playerStack + playerCurrentBet,
 	);
-	const maxBetOrRaise = playerStack + playerCurrentBet;
+	const maxBetOrRaiseValue = playerStack + playerCurrentBet;
 
 	return (
 		<TooltipProvider>
@@ -907,7 +959,7 @@ function RouteComponent() {
 												</Button>
 											</span>
 										</TooltipTrigger>
-										{!startGame.isPending && (
+										{!canStartGame && !startGame.isPending && (
 											<TooltipContent>
 												<p>{startGameButtonTitle}</p>
 											</TooltipContent>
@@ -1036,7 +1088,7 @@ function RouteComponent() {
 																			key={`${c.rank}${c.suit}-${index}`}
 																			rank={c.rank}
 																			suit={c.suit}
-																			size="lg"
+																			size="md"
 																		/>
 																	))}
 																</div>
@@ -1075,7 +1127,7 @@ function RouteComponent() {
 										<h3 className="mb-1 font-medium text-sm">
 											Community Cards
 										</h3>
-										<div className="flex min-h-[36px] flex-wrap items-center justify-center gap-2 font-mono text-lg">
+										<div className="flex min-h-[7rem] flex-wrap items-center justify-center gap-2">
 											{gameState.communityCards.length > 0 ? (
 												gameState.communityCards.map((card, index) => (
 													<CardComponent
@@ -1087,7 +1139,7 @@ function RouteComponent() {
 												))
 											) : (
 												<span className="text-muted-foreground text-sm">
-													--
+													-- No cards dealt --
 												</span>
 											)}
 										</div>
@@ -1141,12 +1193,14 @@ function RouteComponent() {
 																val === "" ? 0 : Number.parseInt(val, 10) || 0,
 															);
 														}}
-														min={canBet ? minBet : minRaiseTo}
-														max={maxBetOrRaise}
+														min={canBet ? minBetValue : minRaiseToValue}
+														max={maxBetOrRaiseValue}
 														step={room.bigBlind > 0 ? room.bigBlind : 1}
 														className="h-8 w-24 rounded border bg-background px-2 text-sm"
 														placeholder={
-															canBet ? `Min ${minBet}` : `Min ${minRaiseTo}`
+															canBet
+																? `Min ${minBetValue}`
+																: `Min ${minRaiseToValue}`
 														}
 													/>
 													{canBet && (
@@ -1154,7 +1208,8 @@ function RouteComponent() {
 															size="sm"
 															onClick={handleBet}
 															disabled={
-																betAmount < minBet || betAmount > maxBetOrRaise
+																betAmount < minBetValue ||
+																betAmount > maxBetOrRaiseValue
 															}
 														>
 															Bet {betAmount > 0 ? betAmount : ""}
@@ -1165,8 +1220,8 @@ function RouteComponent() {
 															size="sm"
 															onClick={handleRaise}
 															disabled={
-																betAmount < minRaiseTo ||
-																betAmount > maxBetOrRaise
+																betAmount < minRaiseToValue ||
+																betAmount > maxBetOrRaiseValue
 															}
 														>
 															Raise to {betAmount > 0 ? betAmount : ""}

@@ -1,4 +1,5 @@
 import type { ServerWebSocket } from "bun";
+import { type Operation, compare } from "fast-json-patch";
 import type { WSContext } from "hono/ws";
 import { produce } from "immer";
 import { nanoid } from "nanoid";
@@ -52,12 +53,18 @@ interface ErrorMessage {
 	message: string;
 }
 
+interface GameStatePatchMessage {
+	type: "game_state_patch";
+	patches: Operation[];
+}
+
 type ServerWebSocketMessage =
 	| ChatMessage
 	| MessageHistory
 	| RoomStateUpdate
 	| RoomClosed
 	| GameStateUpdate
+	| GameStatePatchMessage
 	| ErrorMessage;
 
 interface ClientChatMessage {
@@ -106,6 +113,13 @@ const MAX_MESSAGE_LENGTH = 32;
 function broadcast(roomId: string, message: ServerWebSocketMessage) {
 	const roomConnections = rooms.get(roomId);
 	if (!roomConnections || roomConnections.size === 0) return;
+
+	if (message.type === "game_state_patch") {
+		console.warn(
+			"[Broadcast] Attempted to broadcast raw patches. Use broadcastGameStatePatches instead.",
+		);
+		return;
+	}
 
 	let commonMessageString: string | undefined;
 	if (message.type !== "game_state") {
@@ -232,6 +246,78 @@ export async function broadcastGameState(
 			`[BroadcastGameState Error] Failed for room ${roomId}:`,
 			error,
 		);
+	}
+}
+
+export function broadcastGameStatePatches(
+	roomId: string,
+	patches: Operation[],
+) {
+	const roomConnections = rooms.get(roomId);
+	if (!roomConnections || roomConnections.size === 0 || patches.length === 0) {
+		if (patches.length === 0) {
+			console.log(`[Broadcast Patches] No patches to send for room ${roomId}.`);
+		}
+		return;
+	}
+
+	console.log(
+		`[Broadcast Patches] Broadcasting ${patches.length} patches for room ${roomId}.`,
+	);
+
+	for (const [clientUserId, client] of roomConnections) {
+		if (client.readyState === 1) {
+			const filteredPatches = patches.filter((patch) => {
+				const pathSegments = patch.path.split("/");
+				if (
+					pathSegments.length >= 4 &&
+					pathSegments[1] === "playerStates" &&
+					pathSegments[3] === "hand"
+				) {
+					const patchUserId = pathSegments[2];
+					return patchUserId === clientUserId;
+				}
+				return true;
+			});
+
+			const finalFilteredPatches = filteredPatches.filter(
+				(patch) => !patch.path.startsWith("/deck"),
+			);
+
+			if (finalFilteredPatches.length > 0) {
+				const patchMessage: GameStatePatchMessage = {
+					type: "game_state_patch",
+					patches: finalFilteredPatches,
+				};
+				try {
+					client.send(JSON.stringify(patchMessage));
+				} catch (error) {
+					console.error(
+						`[Broadcast Patches Error] Failed to send patches to user ${clientUserId} in room ${roomId}:`,
+						error,
+					);
+				}
+			} else {
+				console.log(
+					`[Broadcast Patches] No relevant patches to send to user ${clientUserId} after filtering.`,
+				);
+			}
+		} else {
+			console.warn(
+				`[Broadcast Patches Cleanup] Removing non-open WebSocket connection for user ${clientUserId} in room ${roomId}. State: ${client.readyState}`,
+			);
+			roomConnections.delete(clientUserId);
+			Promise.allSettled([
+				updateRoomMemberActiveStatus(roomId, clientUserId, false),
+			]).catch(console.error);
+			if (roomConnections.size === 0) {
+				console.log(
+					`[Broadcast Patches Cleanup] Room ${roomId} is now empty. Removing from active rooms map.`,
+				);
+				rooms.delete(roomId);
+				break;
+			}
+		}
 	}
 }
 
@@ -440,7 +526,10 @@ export function handleWebSocket(
 						);
 
 						await setGameState(roomId, updatedGameState);
-						await broadcastGameState(roomId, updatedGameState);
+
+						const patches = compare(currentGameState, updatedGameState);
+
+						broadcastGameStatePatches(roomId, patches);
 
 						if (updatedGameState.phase === "end_hand") {
 							console.log(
