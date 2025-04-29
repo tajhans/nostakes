@@ -15,6 +15,7 @@ import { trpc } from "@/utils/trpc";
 import { trpcClient } from "@/utils/trpc";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { TRPCClientError } from "@trpc/client";
 import { type Operation, applyPatch } from "fast-json-patch";
 import { Check, Circle, CircleDot, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -260,7 +261,6 @@ function RouteComponent() {
 	const { data: session, isPending: isSessionPending } =
 		authClient.useSession();
 	const navigate = useNavigate({ from: Route.fullPath });
-	const queryClient = useQueryClient();
 
 	const [members, setMembers] = useState<RoomMemberInfo[]>([]);
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -270,13 +270,36 @@ function RouteComponent() {
 	const [betAmount, setBetAmount] = useState<number>(0);
 	const [isCopied, setIsCopied] = useState(false);
 	const hasShownInitialConnectToast = useRef(false);
+	const reconnectAttempt = useRef(0);
+	const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
 
-	const { data: initialRoomData, isLoading: isRoomLoading } = useQuery({
+	const {
+		data: initialRoomData,
+		isLoading: isRoomLoading,
+		isError: isRoomError,
+		error: roomError,
+	} = useQuery({
 		...trpc.getRooms.queryOptions(),
 		enabled: !!session && !!roomId,
 		select: (data): RoomData | undefined => data.find((r) => r.id === roomId),
 		staleTime: 5 * 60 * 1000,
 		gcTime: 10 * 60 * 1000,
+		retry: (failureCount, error: unknown) => {
+			if (error instanceof TRPCClientError) {
+				const code = error.data?.code; // Use optional chaining
+
+				if (code === "NOT_FOUND" || code === "UNAUTHORIZED") {
+					console.log(`Not retrying query due to error code: ${code}`);
+					return false;
+				}
+			}
+
+			console.log(
+				`Retrying query (attempt ${failureCount + 1}) after error:`,
+				error,
+			);
+			return failureCount < 3;
+		},
 	});
 
 	const startGame = useMutation({
@@ -285,7 +308,6 @@ function RouteComponent() {
 		},
 		onSuccess: () => {
 			toast.success("Game started!");
-			queryClient.invalidateQueries({ queryKey: trpc.getRooms.queryKey() });
 		},
 		onError: (error) => {
 			toast.error(`Failed to start game: ${error.message}`);
@@ -325,6 +347,13 @@ function RouteComponent() {
 			const actionText = variables.wantsToPlay ? "IN" : "OUT";
 			const typeText = (initialRoomData?.ante ?? 0) > 0 ? "ante" : "hand";
 			toast.success(`You are now ${actionText} for the next ${typeText}.`);
+			setMembers((prevMembers) =>
+				prevMembers.map((m) =>
+					m.userId === session?.user?.id
+						? { ...m, wantsToPlayNextHand: variables.wantsToPlay }
+						: m,
+				),
+			);
 		},
 		onError: (error) => {
 			toast.error(`Failed to update status: ${error.message}`);
@@ -332,49 +361,22 @@ function RouteComponent() {
 	});
 
 	useEffect(() => {
-		if (
-			isSessionPending ||
-			!roomId ||
-			isRoomLoading ||
-			(initialRoomData === undefined && !isRoomLoading)
-		) {
-			console.log(
-				"WebSocket Effect: Prerequisites not met (session pending, no roomId, room loading, or room not found).",
-			);
-			if (wsRef.current) {
-				console.log(
-					"WebSocket Effect: Closing existing connection due to unmet prerequisites.",
-				);
-				wsRef.current.close(1000, "Prerequisites not met");
-				wsRef.current = null;
-				setIsConnected(false);
-			}
-			return;
+		if (reconnectTimeout.current) {
+			clearTimeout(reconnectTimeout.current);
+			reconnectTimeout.current = null;
 		}
 
-		if (!initialRoomData) {
-			console.log("WebSocket Effect: Room data not found, not connecting.");
+		if (isSessionPending) {
+			console.log("WebSocket Effect: Waiting for session...");
 			return;
 		}
-
-		if (!session?.user) {
-			console.log(
-				"WebSocket Effect: User session not available, not connecting.",
-			);
+		if (!session?.user?.id || !session?.user?.username) {
+			console.log("WebSocket Effect: Session data missing (id or username).");
+			navigate({ to: "/login" });
 			return;
 		}
-
-		const serverUrlString = import.meta.env.VITE_SERVER_URL;
-		if (!serverUrlString) {
-			console.error(
-				"VITE_SERVER_URL is not defined in environment variables. Cannot establish WebSocket connection.",
-			);
-			toast.error("Server configuration error. Unable to connect to the room.");
-			if (wsRef.current) {
-				wsRef.current.close(1000, "Configuration error");
-				wsRef.current = null;
-				setIsConnected(false);
-			}
+		if (!roomId) {
+			console.log("WebSocket Effect: roomId is missing.");
 			return;
 		}
 
@@ -384,24 +386,45 @@ function RouteComponent() {
 			);
 			wsRef.current.close(1000, "Reconnecting or dependencies changed");
 			wsRef.current = null;
+			setIsConnected(false);
 		}
 
-		const serverUrl = new URL(serverUrlString);
-		const wsProtocol = serverUrl.protocol === "https:" ? "wss" : "ws";
-		const wsUrl = `${wsProtocol}://${serverUrl.host}/ws?roomId=${roomId}&userId=${session.user.id}&username=${encodeURIComponent(session.user.username || "Anonymous")}`;
+		const serverUrlString = import.meta.env.VITE_SERVER_URL;
+		if (!serverUrlString) {
+			console.error("VITE_SERVER_URL is not defined.");
+			toast.error("Configuration error. Cannot connect.");
+			return;
+		}
+
+		let wsUrl: string;
+		try {
+			const serverUrl = new URL(serverUrlString);
+			const wsProtocol = serverUrl.protocol === "https:" ? "wss" : "ws";
+			wsUrl = `${wsProtocol}://${serverUrl.host}/ws?roomId=${roomId}&userId=${session.user.id}&username=${encodeURIComponent(session.user.username)}`;
+		} catch (e) {
+			console.error("Invalid VITE_SERVER_URL:", serverUrlString, e);
+			toast.error("Invalid server configuration.");
+			return;
+		}
 
 		console.log("WebSocket Effect: Attempting to connect to", wsUrl);
 		const ws = new WebSocket(wsUrl);
 		wsRef.current = ws;
 
 		const handleOpen = () => {
-			console.log("WebSocket connected");
 			if (wsRef.current === ws) {
+				console.log("WebSocket connected");
 				setIsConnected(true);
+				reconnectAttempt.current = 0;
 				if (!hasShownInitialConnectToast.current) {
-					toast.success("Connected to room server.");
+					toast.success("Connected to room.");
 					hasShownInitialConnectToast.current = true;
 				}
+			} else {
+				console.log(
+					"WebSocket opened, but it's not the current ref. Closing it.",
+				);
+				ws.close(1000, "Stale connection opened");
 			}
 		};
 
@@ -410,7 +433,7 @@ function RouteComponent() {
 
 			try {
 				const data: ServerWebSocketMessage = JSON.parse(event.data);
-				console.log("WS Message Received:", data.type);
+				console.debug("WS Message Received:", data.type);
 
 				switch (data.type) {
 					case "chat":
@@ -424,24 +447,13 @@ function RouteComponent() {
 						);
 						break;
 					case "room_state": {
-						const processedMembers: RoomMemberInfo[] = data.members.map(
-							(member) => ({
-								...member,
-								joinedAt: member.joinedAt
-									? new Date(member.joinedAt)
-									: undefined,
-							}),
-						);
+						console.log("Room State Update Received", data.members);
+						const processedMembers = data.members.map((member) => ({
+							...member,
+							wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
+							joinedAt: member.joinedAt ? new Date(member.joinedAt) : undefined,
+						}));
 						setMembers(processedMembers);
-						queryClient.setQueryData<RoomData[] | undefined>(
-							trpc.getRooms.queryKey(),
-							(oldData): RoomData[] | undefined => {
-								if (!oldData) return undefined;
-								return oldData.map((r) =>
-									r.id === roomId ? { ...r, members: processedMembers } : r,
-								);
-							},
-						);
 						break;
 					}
 					case "room_closed":
@@ -462,14 +474,12 @@ function RouteComponent() {
 						}
 						break;
 					case "game_state_patch":
-						console.log(
-							`Game State Patch Received (${data.patches.length} operations)`,
+						console.debug(
+							`Game State Patch Received (${data.patches.length} ops)`,
 						);
 						setGameState((currentState) => {
 							if (!currentState) {
-								console.warn(
-									"Received patches but current state is null. Ignoring patches.",
-								);
+								console.warn("Received patches but current state is null.");
 								return null;
 							}
 							try {
@@ -492,7 +502,7 @@ function RouteComponent() {
 							} catch (error) {
 								console.error("Failed to apply game state patches:", error);
 								toast.error(
-									"Failed to update game state. State might be out of sync.",
+									"Game state update error. State may be out of sync.",
 								);
 								return currentState;
 							}
@@ -505,7 +515,7 @@ function RouteComponent() {
 						console.warn("Received unknown WebSocket message type:", data);
 				}
 			} catch (error) {
-				console.error("Failed to parse WebSocket message:", error);
+				console.error("Failed to parse WebSocket message:", error, event.data);
 				toast.error("Received invalid data from server.");
 			}
 		};
@@ -516,27 +526,41 @@ function RouteComponent() {
 				setIsConnected(false);
 				wsRef.current = null;
 
+				const normalClosureCodes = [1000, 1001, 1005];
 				const expectedReasons = [
 					"Room closed by owner",
 					"Client navigating away",
 					"Reconnecting or dependencies changed",
-					"Prerequisites not met",
+					"Prerequisites became unmet",
 					"New connection established",
 					"Configuration error",
+					"Stale connection opened",
 				];
+
 				if (
-					event.code !== 1000 &&
-					event.code !== 1001 &&
-					event.code !== 1005 &&
+					!normalClosureCodes.includes(event.code) &&
 					!expectedReasons.includes(event.reason)
 				) {
 					toast.error(
-						`Connection lost unexpectedly (Code: ${event.code}). Attempting to reconnect...`,
+						`Connection lost (Code: ${event.code}). Attempting to reconnect...`,
 					);
 					hasShownInitialConnectToast.current = false;
+
+					const delay = Math.min(30000, 2 ** reconnectAttempt.current * 1000);
+					reconnectAttempt.current += 1;
+					console.log(
+						`Attempting reconnect #${reconnectAttempt.current} in ${delay / 1000}s`,
+					);
+
+					if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
+					reconnectTimeout.current = setTimeout(() => {
+						console.log(
+							"Reconnect timer elapsed. Manual refresh may be needed or effect should re-run.",
+						);
+					}, delay);
 				} else if (event.reason && !expectedReasons.includes(event.reason)) {
 					toast.info(`Disconnected: ${event.reason}`);
-				} else if (event.code !== 1000 && event.code !== 1001) {
+				} else if (!normalClosureCodes.includes(event.code)) {
 					toast.info(`Disconnected (Code: ${event.code})`);
 				}
 			} else {
@@ -559,17 +583,16 @@ function RouteComponent() {
 		ws.onerror = handleError;
 
 		return () => {
-			console.log("WebSocket Effect: Cleanup function running...");
-			if (ws && ws.readyState < WebSocket.CLOSING) {
-				console.log(
-					"WebSocket Effect: Closing connection via cleanup function.",
-				);
+			console.log("WebSocket Effect: Cleanup running.");
+			if (reconnectTimeout.current) {
+				clearTimeout(reconnectTimeout.current);
+				reconnectTimeout.current = null;
+			}
+			if (wsRef.current === ws && ws.readyState < WebSocket.CLOSING) {
+				console.log("WebSocket Effect: Closing connection via cleanup.");
 				ws.close(1000, "Client navigating away");
 			}
 			if (wsRef.current === ws) {
-				console.log(
-					"WebSocket Effect: Clearing ref in cleanup as it matched closing ws.",
-				);
 				wsRef.current = null;
 				setIsConnected(false);
 			}
@@ -578,20 +601,23 @@ function RouteComponent() {
 		roomId,
 		session?.user?.id,
 		session?.user?.username,
-		navigate,
 		isSessionPending,
-		queryClient,
+		navigate,
+		gameState?.currentPlayerSeat,
+		gameState?.phase,
 	]);
 
 	useEffect(() => {
-		if (initialRoomData?.members) {
+		if (initialRoomData?.members && members.length === 0) {
+			console.log("Setting initial members from query data.");
 			const processedInitialMembers = initialRoomData.members.map((member) => ({
 				...member,
+				wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
 				joinedAt: member.joinedAt ? new Date(member.joinedAt) : undefined,
 			}));
-			setMembers(processedInitialMembers as RoomMemberInfo[]);
+			setMembers(processedInitialMembers);
 		}
-	}, [initialRoomData]);
+	}, [initialRoomData, members.length]);
 
 	useEffect(() => {
 		const currentPlayerState = gameState?.playerStates[session?.user?.id ?? ""];
@@ -615,7 +641,10 @@ function RouteComponent() {
 		const canRaise =
 			currentBet > 0 && playerStack > currentBet - playerCurrentBet;
 
-		const minBetAmount = Math.min(initialRoomData.bigBlind, playerStack);
+		const minBetAmount = Math.max(
+			1,
+			Math.min(initialRoomData.bigBlind, playerStack),
+		);
 		const minRaiseToAmount = Math.min(
 			currentBet + minRaiseAmount,
 			playerStack + playerCurrentBet,
@@ -625,30 +654,23 @@ function RouteComponent() {
 		let adjustedBetAmount = betAmount;
 		let adjustmentNeeded = false;
 
-		if (canBet && betAmount > 0) {
-			if (betAmount < minBetAmount && betAmount !== playerStack) {
-				adjustedBetAmount = minBetAmount;
-				adjustmentNeeded = true;
-			} else if (betAmount > playerStack) {
-				adjustedBetAmount = playerStack;
-				adjustmentNeeded = true;
-			}
-		} else if (canRaise && betAmount > currentBet) {
-			if (betAmount < minRaiseToAmount && betAmount !== maxBetOrRaiseAmount) {
-				adjustedBetAmount = minRaiseToAmount;
-				adjustmentNeeded = true;
-			} else if (betAmount > maxBetOrRaiseAmount) {
-				adjustedBetAmount = maxBetOrRaiseAmount;
-				adjustmentNeeded = true;
-			}
-		} else if (
-			betAmount > 0 &&
-			!canBet &&
-			(!canRaise || betAmount <= currentBet)
-		) {
-			if (canRaise) {
-				adjustedBetAmount = minRaiseToAmount;
-				adjustmentNeeded = true;
+		if (betAmount > 0) {
+			if (canBet) {
+				if (betAmount < minBetAmount && betAmount !== playerStack) {
+					adjustedBetAmount = minBetAmount;
+					adjustmentNeeded = true;
+				} else if (betAmount > playerStack) {
+					adjustedBetAmount = playerStack;
+					adjustmentNeeded = true;
+				}
+			} else if (canRaise) {
+				if (betAmount < minRaiseToAmount && betAmount !== maxBetOrRaiseAmount) {
+					adjustedBetAmount = minRaiseToAmount;
+					adjustmentNeeded = true;
+				} else if (betAmount > maxBetOrRaiseAmount) {
+					adjustedBetAmount = maxBetOrRaiseAmount;
+					adjustmentNeeded = true;
+				}
 			}
 		}
 
@@ -656,13 +678,15 @@ function RouteComponent() {
 			console.log(
 				`Adjusting bet amount from ${betAmount} to ${adjustedBetAmount}`,
 			);
-			setBetAmount(adjustedBetAmount);
+			requestAnimationFrame(() => {
+				setBetAmount(adjustedBetAmount);
+			});
 		}
 	}, [gameState, session?.user?.id, initialRoomData, betAmount]);
 
 	const sendMessage = (message: ClientChatMessage | ClientPokerAction) => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			console.log("Sending WS Message:", message.type);
+			console.debug("Sending WS Message:", message.type, message);
 			wsRef.current.send(JSON.stringify(message));
 		} else {
 			console.warn("Attempted to send message, but WebSocket is not open.");
@@ -720,36 +744,97 @@ function RouteComponent() {
 	const handleCall = () => sendMessage({ type: "action", action: "call" });
 	const handleBet = () => {
 		const amount = Math.floor(betAmount);
-		if (amount > 0) {
-			sendMessage({ type: "action", action: "bet", amount: amount });
+		if (amount > 0 && gameState && initialRoomData) {
+			const playerState = gameState.playerStates[session?.user?.id ?? ""];
+			if (!playerState) return;
+			const minBetValue = Math.max(
+				1,
+				Math.min(initialRoomData.bigBlind, playerState.stack),
+			);
+			if (amount >= minBetValue && amount <= playerState.stack) {
+				sendMessage({ type: "action", action: "bet", amount: amount });
+			} else {
+				toast.error(
+					`Invalid bet amount (Min: ${minBetValue}, Max: ${playerState.stack})`,
+				);
+			}
 		} else {
 			toast.error("Invalid bet amount");
 		}
 	};
 	const handleRaise = () => {
 		const amount = Math.floor(betAmount);
-		if (amount > (gameState?.currentBet ?? 0)) {
-			sendMessage({ type: "action", action: "raise", amount: amount });
+		if (gameState && initialRoomData) {
+			const playerState = gameState.playerStates[session?.user?.id ?? ""];
+			if (!playerState) return;
+			const currentBet = gameState.currentBet;
+			const minRaiseAmount = gameState.minRaiseAmount;
+			const minRaiseToValue = Math.min(
+				currentBet + minRaiseAmount,
+				playerState.stack + playerState.currentBet,
+			);
+			const maxRaiseValue = playerState.stack + playerState.currentBet;
+
+			if (amount >= minRaiseToValue && amount <= maxRaiseValue) {
+				sendMessage({ type: "action", action: "raise", amount: amount });
+			} else {
+				toast.error(
+					`Invalid raise amount (Min: ${minRaiseToValue}, Max: ${maxRaiseValue})`,
+				);
+			}
 		} else {
 			toast.error("Invalid raise amount");
 		}
 	};
 
-	if (isSessionPending || (roomId && isRoomLoading)) {
+	if (isSessionPending) {
+		console.log("Render: Session pending...");
 		return <RoomSkeleton />;
 	}
 
 	if (!session?.user) {
+		console.log("Render: No user session found after loading.");
+		return (
+			<div className="container p-4 text-center">
+				Please log in to view rooms.
+				<Button onClick={() => navigate({ to: "/login" })} className="ml-2">
+					Login
+				</Button>
+			</div>
+		);
+	}
+
+	if (roomId && isRoomLoading) {
+		console.log("Render: Room data loading...");
 		return <RoomSkeleton />;
 	}
 
+	if (roomId && isRoomError) {
+		console.error("Render: Error loading room data:", roomError);
+		const isNotFoundError =
+			roomError instanceof TRPCClientError &&
+			roomError.data?.code === "NOT_FOUND";
+		const errorMsg = isNotFoundError
+			? "The room was not found."
+			: "Failed to load room data.";
+		return (
+			<div className="container mx-auto px-4 py-8 text-center">
+				<h1 className="mb-4 font-bold text-destructive text-xl">Error</h1>
+				<p className="text-muted-foreground">{errorMsg}</p>
+				<Button onClick={() => navigate({ to: "/" })} className="mt-4">
+					Go to Home
+				</Button>
+			</div>
+		);
+	}
+
 	if (roomId && !isRoomLoading && !initialRoomData) {
+		console.log("Render: Room not found after loading.");
 		return (
 			<div className="container mx-auto px-4 py-8 text-center">
 				<h1 className="mb-4 font-bold text-xl">Room Not Found</h1>
 				<p className="text-muted-foreground">
-					The room you are looking for does not exist or you may not have access
-					to it.
+					The room ID might be incorrect, or the room no longer exists.
 				</p>
 				<Button onClick={() => navigate({ to: "/" })} className="mt-4">
 					Go to Home
@@ -759,11 +844,11 @@ function RouteComponent() {
 	}
 
 	if (!initialRoomData) {
-		console.error("Error: initialRoomData is unexpectedly null/undefined.");
+		console.error("Render: initialRoomData is unexpectedly null/undefined.");
 		return (
 			<div className="container mx-auto px-4 py-8 text-center">
 				<h1 className="mb-4 font-bold text-destructive text-xl">
-					Error Loading Room Data
+					Error Displaying Room
 				</h1>
 				<Button onClick={() => navigate({ to: "/" })} className="mt-4">
 					Go to Home
@@ -817,6 +902,7 @@ function RouteComponent() {
 
 	const showPlayButton =
 		room.isActive &&
+		currentUserMemberInfo?.isActive &&
 		(!gameState ||
 			gameState.phase === "waiting" ||
 			gameState.phase === "end_hand");
@@ -890,7 +976,7 @@ function RouteComponent() {
 										{isConnected ? (
 											<CircleDot className="h-4 w-4 text-green-600" />
 										) : (
-											<Circle className="h-4 w-4 text-red-600" />
+											<Circle className="h-4 w-4 animate-pulse text-red-600" />
 										)}
 									</TooltipTrigger>
 									<TooltipContent>
@@ -904,7 +990,7 @@ function RouteComponent() {
 							</div>
 
 							<div className="flex flex-wrap items-center justify-end gap-2">
-								{showPlayButton && currentUserMemberInfo?.isActive && (
+								{showPlayButton && (
 									<Button
 										variant={wantsToPlay ? "secondary" : "outline"}
 										size="sm"
@@ -951,7 +1037,11 @@ function RouteComponent() {
 													}}
 													disabled={!canStartGame || startGame.isPending}
 													aria-disabled={!canStartGame || startGame.isPending}
-													className={!canStartGame ? "pointer-events-none" : ""}
+													className={
+														!canStartGame
+															? "pointer-events-none opacity-50"
+															: ""
+													}
 												>
 													{startGame.isPending ? "Starting..." : "Start Game"}
 												</Button>
@@ -1037,7 +1127,15 @@ function RouteComponent() {
 											return (
 												<div
 													key={member.userId}
-													className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded p-2 transition-all ${member.isActive ? "bg-accent/50" : "bg-muted/30 opacity-60"} ${isCurrent ? "ring-2 ring-primary ring-offset-1 ring-offset-background" : ""}`}
+													className={cn(
+														"flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded p-2 transition-all",
+														member.isActive
+															? "bg-accent/50"
+															: "bg-muted/30 opacity-60",
+														isCurrent
+															? "ring-2 ring-primary ring-offset-1 ring-offset-background"
+															: "",
+													)}
 												>
 													<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
 														<span className="w-14 flex-shrink-0 text-muted-foreground text-xs">
@@ -1086,7 +1184,7 @@ function RouteComponent() {
 																			key={`${c.rank}${c.suit}-${index}`}
 																			rank={c.rank}
 																			suit={c.suit}
-																			size="md"
+																			size="lg"
 																		/>
 																	))}
 																</div>
@@ -1200,6 +1298,7 @@ function RouteComponent() {
 																? `Min ${minBetValue}`
 																: `Min ${minRaiseToValue}`
 														}
+														aria-label="Bet or Raise Amount"
 													/>
 													{canBet && (
 														<Button
@@ -1228,20 +1327,23 @@ function RouteComponent() {
 												</div>
 											)}
 
+											{/* All In Button */}
 											{(canBet || canRaise || canCall) && playerStack > 0 && (
 												<Button
 													variant="secondary"
 													size="sm"
 													onClick={() => {
 														const allInAmount = playerStack + playerCurrentBet;
-														if (
-															canBet ||
-															(canRaise && allInAmount > currentBet)
-														) {
-															const actionType = canBet ? "bet" : "raise";
+														if (canBet && allInAmount > 0) {
 															sendMessage({
 																type: "action",
-																action: actionType,
+																action: "bet",
+																amount: allInAmount,
+															});
+														} else if (canRaise && allInAmount > currentBet) {
+															sendMessage({
+																type: "action",
+																action: "raise",
 																amount: allInAmount,
 															});
 														} else if (canCall) {
@@ -1283,7 +1385,7 @@ function RouteComponent() {
 						sendMessage={sendChatMessage}
 						isConnected={isConnected}
 						currentUserId={session.user.id}
-						filterProfanity={initialRoomData.filterProfanity}
+						filterProfanity={room.filterProfanity}
 					/>
 				</div>
 			</div>

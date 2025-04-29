@@ -9,9 +9,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { trpcClient } from "@/utils/trpc";
+import { trpc, trpcClient } from "@/utils/trpc";
 import { useForm } from "@tanstack/react-form";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -41,6 +41,7 @@ type CreateRoomFormData = z.infer<typeof createRoomSchema>;
 
 export default function CreateRoomForm() {
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 
 	const createRoom = useMutation({
 		mutationFn: async (data: CreateRoomFormData) => {
@@ -48,6 +49,7 @@ export default function CreateRoomForm() {
 		},
 		onSuccess: (room) => {
 			toast.success("Room created successfully");
+			queryClient.invalidateQueries({ queryKey: trpc.getRooms.queryKey() });
 			navigate({ to: "/room", search: { id: room.id } });
 		},
 		onError: (error) => {

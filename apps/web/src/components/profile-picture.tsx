@@ -38,7 +38,7 @@ export const ProfilePicture: React.FC<ProfilePictureProps> = ({
 	useEffect(() => {
 		setIsLoaded(false);
 		setHasError(false);
-	}, [imageUrl]);
+	}, []);
 
 	const showImage = imageUrl && !hasError;
 	const showPlaceholder = !isLoaded && imageBase64 && showImage;

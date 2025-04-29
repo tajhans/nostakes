@@ -53,7 +53,7 @@ export function RoomChat({
 				scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
 			}
 		}
-	}, [messages]);
+	}, []);
 
 	const handleSend = async () => {
 		const trimmedMessage = messageInput.trim();
