@@ -1517,6 +1517,7 @@ function determineWinner(gameState: GameState): GameState {
 			p.hand = [];
 			p.hasActed = false;
 			p.isFolded = false;
+			p.isAllIn = false;
 		}
 
 		draft.phase = "end_hand";
