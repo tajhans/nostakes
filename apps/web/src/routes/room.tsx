@@ -577,12 +577,11 @@ function RouteComponent() {
 		};
 	}, [
 		roomId,
-		session,
-		initialRoomData,
+		session?.user?.id,
+		session?.user?.username,
 		navigate,
-		queryClient,
 		isSessionPending,
-		isRoomLoading,
+		queryClient,
 	]);
 
 	useEffect(() => {
@@ -845,7 +844,7 @@ function RouteComponent() {
 		isMyTurn && currentBet > 0 && playerStack > currentBet - playerCurrentBet;
 
 	const callAmount = Math.min(currentBet - playerCurrentBet, playerStack);
-	const minBetValue = Math.max(1, Math.min(room.bigBlind, playerStack)); // Ensure min bet is at least 1
+	const minBetValue = Math.max(1, Math.min(room.bigBlind, playerStack));
 	const minRaiseToValue = Math.min(
 		currentBet + minRaiseAmount,
 		playerStack + playerCurrentBet,

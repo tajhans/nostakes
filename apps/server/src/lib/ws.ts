@@ -457,6 +457,30 @@ export function handleWebSocket(
 			event: MessageEvent,
 			ws: WSContext<ServerWebSocket<undefined>>,
 		) => {
+			let payload: ClientWebSocketMessage;
+			try {
+				payload = JSON.parse(event.data.toString());
+				console.debug(
+					`[WS OnMessage] Received from ${userId} in room ${roomId}:`,
+					payload.type,
+				);
+			} catch (parseError) {
+				console.error(
+					`[WS OnMessage Error] Failed to parse message from ${userId} in room ${roomId}:`,
+					parseError,
+					event.data,
+				);
+				if (ws.readyState === 1) {
+					ws.send(
+						JSON.stringify({
+							type: "error",
+							message: "Invalid message format.",
+						}),
+					);
+				}
+				return;
+			}
+
 			try {
 				const payload: ClientWebSocketMessage = JSON.parse(
 					event.data.toString(),
@@ -489,41 +513,69 @@ export function handleWebSocket(
 					await storeMessage(message);
 					broadcast(roomId, message);
 				} else if (payload.type === "action") {
-					const currentGameState = await getGameState(roomId);
-					if (!currentGameState) {
-						console.error(
-							`[WS OnMessage Action Error] Received action from ${userId} for room ${roomId} but no game state found.`,
-						);
-						if (ws.readyState === 1) {
-							ws.send(
-								JSON.stringify({
-									type: "error",
-									message: "Game not found or not started.",
-								}),
-							);
-						}
-						return;
-					}
-
-					const userSeat = currentGameState.playerStates[userId]?.seatNumber;
-					if (currentGameState.currentPlayerSeat !== userSeat) {
-						console.warn(
-							`[WS OnMessage Action] Action received from ${userId} (Seat ${userSeat}) but not their turn (Current Seat: ${currentGameState.currentPlayerSeat}). Ignoring.`,
-						);
-						if (ws.readyState === 1) {
-							ws.send(
-								JSON.stringify({ type: "error", message: "Not your turn." }),
-							);
-						}
-						return;
-					}
-
 					try {
-						const updatedGameState = await performAction(
-							currentGameState,
-							userId,
-							payload,
-						);
+						const currentGameState = await getGameState(roomId);
+						if (!currentGameState) {
+							console.error(
+								`[WS OnMessage Action Error] Received action from ${userId} for room ${roomId} but no game state found.`,
+							);
+							throw new Error("Game not found or not started.");
+						}
+
+						const playerState = currentGameState.playerStates[userId];
+						if (!playerState) {
+							console.warn(
+								`[WS OnMessage Action] User ${userId} not found in game state for room ${roomId}. Ignoring action.`,
+							);
+							throw new Error("You are not currently in this game.");
+						}
+
+						const userSeat = playerState.seatNumber;
+						if (currentGameState.currentPlayerSeat !== userSeat) {
+							console.warn(
+								`[WS OnMessage Action] Action received from ${userId} (Seat ${userSeat}) but not their turn (Current Seat: ${currentGameState.currentPlayerSeat}). Ignoring.`,
+							);
+							throw new Error("Not your turn.");
+						}
+						if (
+							playerState.isFolded ||
+							playerState.isAllIn ||
+							playerState.isSittingOut
+						) {
+							console.warn(
+								`[WS OnMessage Action] Action received from ${userId} (Seat ${userSeat}) but player cannot act (Folded: ${playerState.isFolded}, AllIn: ${playerState.isAllIn}, SittingOut: ${playerState.isSittingOut}). Ignoring.`,
+							);
+							throw new Error("You cannot perform an action right now.");
+						}
+
+						let updatedGameState: GameState;
+						try {
+							updatedGameState = await performAction(
+								currentGameState,
+								userId,
+								payload,
+							);
+						} catch (performActionError: unknown) {
+							let specificErrorMessage = "An error occurred during the action.";
+							if (performActionError instanceof Error) {
+								specificErrorMessage = performActionError.message;
+							} else if (typeof performActionError === "string") {
+								specificErrorMessage = performActionError;
+							}
+							console.error(
+								`[WS OnMessage Action Error - Perform] User ${userId}, Room ${roomId}: ${specificErrorMessage}`,
+								performActionError,
+							);
+							if (ws.readyState === 1) {
+								ws.send(
+									JSON.stringify({
+										type: "error",
+										message: specificErrorMessage,
+									}),
+								);
+							}
+							return;
+						}
 
 						await setGameState(roomId, updatedGameState);
 
@@ -532,30 +584,36 @@ export function handleWebSocket(
 						broadcastGameStatePatches(roomId, patches);
 
 						if (updatedGameState.phase === "end_hand") {
-							console.log(
-								`[WS OnMessage Action] Hand ended in room ${roomId}. Updating member stacks in Redis.`,
-							);
-							const finalPlayerStates = updatedGameState.playerStates;
-							const currentMembers = await getAllRoomMembers(roomId);
+							try {
+								console.log(
+									`[WS OnMessage Action] Hand ended in room ${roomId}. Updating member stacks in Redis.`,
+								);
+								const finalPlayerStates = updatedGameState.playerStates;
+								const currentMembers = await getAllRoomMembers(roomId);
 
-							const updatePromises = currentMembers.map(async (member) => {
-								const finalState = finalPlayerStates[member.userId];
-								if (finalState) {
-									const updatedMemberInfo: RoomMemberInfo = {
-										...member,
-										currentStack: finalState.stack,
-										wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
-									};
-									return setRoomMember(roomId, updatedMemberInfo);
-								}
-								return Promise.resolve();
-							});
+								const updatePromises = currentMembers.map(async (member) => {
+									const finalState = finalPlayerStates[member.userId];
+									if (finalState) {
+										const updatedMemberInfo: RoomMemberInfo = {
+											...member,
+											currentStack: finalState.stack,
+											wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
+										};
+										await setRoomMember(roomId, updatedMemberInfo);
+									}
+								});
 
-							await Promise.all(updatePromises);
-							console.log(
-								`[WS OnMessage Action] Finished updating member stacks in Redis for room ${roomId}.`,
-							);
-							await broadcastRoomState(roomId);
+								await Promise.all(updatePromises);
+								console.log(
+									`[WS OnMessage Action] Finished updating member stacks in Redis for room ${roomId}.`,
+								);
+								await broadcastRoomState(roomId);
+							} catch (endHandError) {
+								console.error(
+									`[WS OnMessage Action Error - End Hand] User ${userId}, Room ${roomId}: Failed to update stacks/broadcast room state`,
+									endHandError,
+								);
+							}
 						}
 					} catch (error: unknown) {
 						let errorMessage = "An error occurred while performing the action.";
