@@ -48,7 +48,8 @@ export default function JoinRoomForm() {
 			joinCode: "",
 		},
 		onSubmit: async ({ value }) => {
-			await joinRoom.mutateAsync(value);
+			const lowercaseJoinCode = value.joinCode.toLowerCase();
+			await joinRoom.mutateAsync({ ...value, joinCode: lowercaseJoinCode });
 		},
 	});
 
