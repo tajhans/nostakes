@@ -298,7 +298,6 @@ function RouteComponent() {
 		},
 		onSuccess: () => {
 			toast.success("Room closed successfully");
-			navigate({ to: "/" });
 		},
 		onError: (error) => {
 			toast.error(`Failed to close room: ${error.message}`);
