@@ -1326,6 +1326,25 @@ function calculatePots(playerStates: Record<string, PlayerState>): PotInfo[] {
 
 	if (playersInPot.length === 0) return [];
 
+	let totalPot = 0;
+	const eligiblePlayers: string[] = [];
+
+	for (const player of playersInPot) {
+		totalPot += player.totalBet;
+		if (!player.isFolded && !player.isSittingOut) {
+			eligiblePlayers.push(player.userId);
+		}
+	}
+
+	const hasAllInPlayers = playersInPot.some((p) => p.isAllIn);
+	if (!hasAllInPlayers && totalPot > 0) {
+		pots.push({
+			amount: totalPot,
+			eligiblePlayers: [...new Set(eligiblePlayers)],
+		});
+		return pots;
+	}
+
 	const betLevels = [
 		0,
 		...new Set(playersInPot.map((p) => p.totalBet).filter((bet) => bet > 0)),
