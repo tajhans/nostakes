@@ -30,6 +30,7 @@ interface GroupedMessage extends ChatMessage {
 }
 
 const MAX_MESSAGE_LENGTH = 32;
+const MIN_MESSAGE_INTERVAL = 2000;
 
 export function RoomChat({
 	messages,
@@ -41,6 +42,7 @@ export function RoomChat({
 	const [messageInput, setMessageInput] = useState("");
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const filter = useRef(new Filter());
+	const lastMessageTime = useRef<number>(0);
 
 	useEffect(() => {
 		if (scrollAreaRef.current) {
@@ -59,14 +61,23 @@ export function RoomChat({
 		const trimmedMessage = messageInput.trim();
 		if (!trimmedMessage) return;
 
-		const messageToSend = trimmedMessage.substring(0, MAX_MESSAGE_LENGTH);
+		const now = Date.now();
+		const timeSinceLastMessage = now - lastMessageTime.current;
+		if (timeSinceLastMessage < MIN_MESSAGE_INTERVAL) {
+			toast.error(
+				`Please wait ${Math.ceil((MIN_MESSAGE_INTERVAL - timeSinceLastMessage) / 1000)} second(s) before sending another message.`,
+			);
+			return;
+		}
 
+		const messageToSend = trimmedMessage.substring(0, MAX_MESSAGE_LENGTH);
 		const finalMessage = filterProfanity
 			? filter.current.clean(messageToSend)
 			: messageToSend;
 
 		sendChatMessageProp(finalMessage);
 		setMessageInput("");
+		lastMessageTime.current = now;
 	};
 
 	const groupedMessages: GroupedMessage[] = messages.map(
