@@ -2,6 +2,16 @@ import { HandHistory } from "@/components/hand-history";
 import { RoomChat } from "@/components/room-chat";
 import { RoomSkeleton } from "@/components/room-skeleton";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
 	Tooltip,
@@ -17,7 +27,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { TRPCClientError } from "@trpc/client";
 import { type Operation, applyPatch } from "fast-json-patch";
-import { Check, Circle, CircleDot, Copy } from "lucide-react";
+import { Check, Circle, CircleDot, Copy, UserX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { suitMap } from "../components/hand-history";
@@ -148,6 +158,11 @@ interface ErrorMessage {
 	message: string;
 }
 
+interface UserKickedMessage {
+	type: "user_kicked";
+	reason: string;
+}
+
 type ServerWebSocketMessage =
 	| ChatMessage
 	| MessageHistory
@@ -155,6 +170,7 @@ type ServerWebSocketMessage =
 	| RoomClosed
 	| GameStateUpdate
 	| GameStatePatchMessage
+	| UserKickedMessage
 	| ErrorMessage;
 
 interface RoomData {
@@ -272,6 +288,9 @@ function RouteComponent() {
 	const hasShownInitialConnectToast = useRef(false);
 	const reconnectAttempt = useRef(0);
 	const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
+	const [userToKick, setUserToKick] = useState<RoomMemberInfo | null>(null);
+	const [isCloseRoomDialogOpen, setIsCloseRoomDialogOpen] = useState(false);
+	const [isLeaveRoomDialogOpen, setIsLeaveRoomDialogOpen] = useState(false);
 
 	const {
 		data: initialRoomData,
@@ -286,7 +305,7 @@ function RouteComponent() {
 		gcTime: 10 * 60 * 1000,
 		retry: (failureCount, error: unknown) => {
 			if (error instanceof TRPCClientError) {
-				const code = error.data?.code; // Use optional chaining
+				const code = error.data?.code;
 
 				if (code === "NOT_FOUND" || code === "UNAUTHORIZED") {
 					console.log(`Not retrying query due to error code: ${code}`);
@@ -320,9 +339,11 @@ function RouteComponent() {
 		},
 		onSuccess: () => {
 			toast.success("Room closed successfully");
+			setIsCloseRoomDialogOpen(false);
 		},
 		onError: (error) => {
 			toast.error(`Failed to close room: ${error.message}`);
+			setIsCloseRoomDialogOpen(false);
 		},
 	});
 
@@ -332,10 +353,12 @@ function RouteComponent() {
 		},
 		onSuccess: () => {
 			toast.success("You have left the room.");
+			setIsLeaveRoomDialogOpen(false);
 			navigate({ to: "/" });
 		},
 		onError: (error) => {
 			toast.error(`Failed to leave room: ${error.message}`);
+			setIsLeaveRoomDialogOpen(false);
 		},
 	});
 
@@ -359,6 +382,27 @@ function RouteComponent() {
 			toast.error(`Failed to update status: ${error.message}`);
 		},
 	});
+
+	const kickUser = useMutation({
+		mutationFn: async (variables: { roomId: string; userIdToKick: string }) => {
+			return trpcClient.kickUser.mutate(variables);
+		},
+		onSuccess: (data, variables) => {
+			toast.success(
+				`Successfully kicked user ${members.find((m) => m.userId === variables.userIdToKick)?.username || "User"}.`,
+			);
+			setUserToKick(null);
+		},
+		onError: (error) => {
+			toast.error(`Failed to kick user: ${error.message}`);
+			setUserToKick(null);
+		},
+	});
+
+	const isHandInProgress =
+		!!gameState &&
+		gameState.phase !== "waiting" &&
+		gameState.phase !== "end_hand";
 
 	useEffect(() => {
 		if (reconnectTimeout.current) {
@@ -508,6 +552,14 @@ function RouteComponent() {
 							}
 						});
 						break;
+					case "user_kicked":
+						console.log("Received user_kicked message:", data.reason);
+						toast.warning(`You have been kicked: ${data.reason}`);
+						if (wsRef.current === ws) {
+							wsRef.current.close(1000, "Kicked by owner");
+						}
+						navigate({ to: "/" });
+						break;
 					case "error":
 						toast.error(`Server error: ${data.message}`);
 						break;
@@ -535,6 +587,7 @@ function RouteComponent() {
 					"New connection established",
 					"Configuration error",
 					"Stale connection opened",
+					"Kicked by owner",
 				];
 
 				if (
@@ -769,11 +822,12 @@ function RouteComponent() {
 			if (!playerState) return;
 			const currentBet = gameState.currentBet;
 			const minRaiseAmount = gameState.minRaiseAmount;
+			const playerCurrentBet = playerState.currentBet;
 			const minRaiseToValue = Math.min(
 				currentBet + minRaiseAmount,
-				playerState.stack + playerState.currentBet,
+				playerState.stack + playerCurrentBet,
 			);
-			const maxRaiseValue = playerState.stack + playerState.currentBet;
+			const maxRaiseValue = playerState.stack + playerCurrentBet;
 
 			if (amount >= minRaiseToValue && amount <= maxRaiseValue) {
 				sendMessage({ type: "action", action: "raise", amount: amount });
@@ -936,6 +990,14 @@ function RouteComponent() {
 	);
 	const maxBetOrRaiseValue = playerStack + playerCurrentBet;
 
+	const handInProgressReason =
+		"Cannot perform this action while a hand is in progress.";
+
+	const closeRoomDisabled =
+		closeRoom.isPending || !isConnected || isHandInProgress;
+	const leaveRoomDisabled =
+		leaveRoom.isPending || !isConnected || isHandInProgress;
+
 	return (
 		<TooltipProvider>
 			<div className="container mx-auto max-w-5xl px-4 py-2">
@@ -1003,22 +1065,65 @@ function RouteComponent() {
 									</Button>
 								)}
 								{isAdmin && room.isActive && (
-									<Button
-										variant="destructive"
-										size="sm"
-										onClick={() => {
-											if (
-												window.confirm(
-													"Are you sure you want to close this room? All players will be removed.",
-												)
-											) {
-												closeRoom.mutate(roomId);
-											}
-										}}
-										disabled={closeRoom.isPending || !isConnected}
+									<Dialog
+										open={isCloseRoomDialogOpen}
+										onOpenChange={setIsCloseRoomDialogOpen}
 									>
-										{closeRoom.isPending ? "Closing..." : "Close Room"}
-									</Button>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<span
+													tabIndex={closeRoomDisabled ? 0 : -1}
+													className={
+														closeRoomDisabled ? "cursor-not-allowed" : ""
+													}
+												>
+													<DialogTrigger asChild>
+														<Button
+															variant="destructive"
+															size="sm"
+															disabled={closeRoomDisabled}
+															aria-disabled={closeRoomDisabled}
+															className={
+																closeRoomDisabled
+																	? "pointer-events-none opacity-50"
+																	: ""
+															}
+														>
+															{closeRoom.isPending
+																? "Closing..."
+																: "Close Room"}
+														</Button>
+													</DialogTrigger>
+												</span>
+											</TooltipTrigger>
+											{isHandInProgress && (
+												<TooltipContent>
+													<p>{handInProgressReason}</p>
+												</TooltipContent>
+											)}
+										</Tooltip>
+										<DialogContent>
+											<DialogHeader>
+												<DialogTitle>Close Room?</DialogTitle>
+												<DialogDescription>
+													Are you sure you want to close this room? All players
+													will be removed and the game will end.
+												</DialogDescription>
+											</DialogHeader>
+											<DialogFooter>
+												<DialogClose asChild>
+													<Button variant="outline">Cancel</Button>
+												</DialogClose>
+												<Button
+													variant="destructive"
+													onClick={() => closeRoom.mutate(roomId)}
+													disabled={closeRoom.isPending}
+												>
+													{closeRoom.isPending ? "Closing..." : "Close Room"}
+												</Button>
+											</DialogFooter>
+										</DialogContent>
+									</Dialog>
 								)}
 								{isAdmin && room.isActive && (
 									<Tooltip>
@@ -1055,22 +1160,66 @@ function RouteComponent() {
 									</Tooltip>
 								)}
 								{!isAdmin && currentUserMemberInfo?.isActive && (
-									<Button
-										variant="outline"
-										size="sm"
-										onClick={() => {
-											if (
-												window.confirm(
-													"Are you sure you want to leave this room?",
-												)
-											) {
-												leaveRoom.mutate(roomId);
-											}
-										}}
-										disabled={leaveRoom.isPending || !isConnected}
+									<Dialog
+										open={isLeaveRoomDialogOpen}
+										onOpenChange={setIsLeaveRoomDialogOpen}
 									>
-										{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
-									</Button>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<span
+													tabIndex={leaveRoomDisabled ? 0 : -1}
+													className={
+														leaveRoomDisabled ? "cursor-not-allowed" : ""
+													}
+												>
+													<DialogTrigger asChild>
+														<Button
+															variant="outline"
+															size="sm"
+															disabled={leaveRoomDisabled}
+															aria-disabled={leaveRoomDisabled}
+															className={
+																leaveRoomDisabled
+																	? "pointer-events-none opacity-50"
+																	: ""
+															}
+														>
+															{leaveRoom.isPending
+																? "Leaving..."
+																: "Leave Room"}
+														</Button>
+													</DialogTrigger>
+												</span>
+											</TooltipTrigger>
+											{isHandInProgress && (
+												<TooltipContent>
+													<p>{handInProgressReason}</p>
+												</TooltipContent>
+											)}
+										</Tooltip>
+										<DialogContent>
+											<DialogHeader>
+												<DialogTitle>Leave Room?</DialogTitle>
+												<DialogDescription>
+													Are you sure you want to leave this room? You can
+													rejoin later using the join code if the room is still
+													open.
+												</DialogDescription>
+											</DialogHeader>
+											<DialogFooter>
+												<DialogClose asChild>
+													<Button variant="outline">Cancel</Button>
+												</DialogClose>
+												<Button
+													variant="destructive"
+													onClick={() => leaveRoom.mutate(roomId)}
+													disabled={leaveRoom.isPending}
+												>
+													{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
+												</Button>
+											</DialogFooter>
+										</DialogContent>
+									</Dialog>
 								)}
 							</div>
 						</div>
@@ -1110,6 +1259,12 @@ function RouteComponent() {
 												!playerState.isFolded &&
 												!playerState.isAllIn &&
 												!playerState.isSittingOut;
+											const canKick =
+												isAdmin &&
+												member.userId !== session.user.id &&
+												member.isActive;
+											const kickDisabled =
+												!canKick || isHandInProgress || kickUser.isPending;
 
 											const displayStack =
 												gameState &&
@@ -1195,9 +1350,87 @@ function RouteComponent() {
 															</span>
 														)}
 													</div>
-													<span className="font-mono text-sm">
-														{displayStack}
-													</span>
+													<div className="flex items-center gap-2">
+														<span className="font-mono text-sm">
+															{displayStack}
+														</span>
+														{canKick && (
+															<Dialog
+																open={userToKick?.userId === member.userId}
+																onOpenChange={(isOpen) => {
+																	if (!isOpen) setUserToKick(null);
+																}}
+															>
+																<Tooltip>
+																	<TooltipTrigger asChild>
+																		<span
+																			tabIndex={kickDisabled ? 0 : -1}
+																			className={
+																				kickDisabled ? "cursor-not-allowed" : ""
+																			}
+																		>
+																			<DialogTrigger asChild>
+																				<Button
+																					variant="ghost"
+																					size="icon"
+																					className={cn(
+																						"h-6 w-6 text-destructive hover:bg-destructive/10",
+																						kickDisabled
+																							? "pointer-events-none opacity-50"
+																							: "",
+																					)}
+																					onClick={() => setUserToKick(member)}
+																					disabled={kickDisabled}
+																					aria-disabled={kickDisabled}
+																				>
+																					<UserX className="h-4 w-4" />
+																				</Button>
+																			</DialogTrigger>
+																		</span>
+																	</TooltipTrigger>
+																	<TooltipContent>
+																		{isHandInProgress ? (
+																			<p>{handInProgressReason}</p>
+																		) : (
+																			<p>Kick {member.username}</p>
+																		)}
+																	</TooltipContent>
+																</Tooltip>
+																<DialogContent>
+																	<DialogHeader>
+																		<DialogTitle>Kick Player?</DialogTitle>
+																		<DialogDescription>
+																			Are you sure you want to kick{" "}
+																			<strong>{userToKick?.username}</strong>{" "}
+																			from the room? They will need the join
+																			code to rejoin.
+																		</DialogDescription>
+																	</DialogHeader>
+																	<DialogFooter>
+																		<DialogClose asChild>
+																			<Button variant="outline">Cancel</Button>
+																		</DialogClose>
+																		<Button
+																			variant="destructive"
+																			onClick={() => {
+																				if (userToKick) {
+																					kickUser.mutate({
+																						roomId,
+																						userIdToKick: userToKick.userId,
+																					});
+																				}
+																			}}
+																			disabled={kickUser.isPending}
+																		>
+																			{kickUser.isPending
+																				? "Kicking..."
+																				: "Kick Player"}
+																		</Button>
+																	</DialogFooter>
+																</DialogContent>
+															</Dialog>
+														)}
+													</div>
 												</div>
 											);
 										})}
@@ -1327,7 +1560,6 @@ function RouteComponent() {
 												</div>
 											)}
 
-											{/* All In Button */}
 											{(canBet || canRaise || canCall) && playerStack > 0 && (
 												<Button
 													variant="secondary"

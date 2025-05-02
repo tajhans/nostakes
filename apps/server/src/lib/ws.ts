@@ -53,6 +53,11 @@ interface ErrorMessage {
 	message: string;
 }
 
+interface UserKickedMessage {
+	type: "user_kicked";
+	reason: string;
+}
+
 interface GameStatePatchMessage {
 	type: "game_state_patch";
 	patches: Operation[];
@@ -65,6 +70,7 @@ type ServerWebSocketMessage =
 	| RoomClosed
 	| GameStateUpdate
 	| GameStatePatchMessage
+	| UserKickedMessage
 	| ErrorMessage;
 
 interface ClientChatMessage {
@@ -341,6 +347,54 @@ export function broadcastRoomClosed(roomId: string) {
 			}
 		}
 		rooms.delete(roomId);
+	}
+}
+
+export function broadcastUserKicked(
+	roomId: string,
+	userIdToKick: string,
+	reason: string,
+) {
+	const roomConnections = rooms.get(roomId);
+	if (!roomConnections) return;
+
+	const client = roomConnections.get(userIdToKick);
+	if (client && client.readyState === 1) {
+		const kickMessage: UserKickedMessage = { type: "user_kicked", reason };
+		try {
+			console.log(
+				`[Broadcast Kick] Sending kick message to user ${userIdToKick} in room ${roomId}.`,
+			);
+			client.send(JSON.stringify(kickMessage));
+			client.close(1000, reason);
+		} catch (error) {
+			console.error(
+				`[Broadcast Kick Error] Failed to send kick message or close connection for user ${userIdToKick} in room ${roomId}:`,
+				error,
+			);
+			try {
+				if (client.readyState < WebSocket.CLOSING) {
+					client.close(1011, "Error during kick process");
+				}
+			} catch (closeError) {
+				// ignore secondary close error
+			}
+		} finally {
+			roomConnections.delete(userIdToKick);
+			console.log(
+				`[Broadcast Kick] Removed kicked user ${userIdToKick} connection from room ${roomId}. Remaining: ${roomConnections.size}`,
+			);
+			if (roomConnections.size === 0) {
+				console.log(
+					`[Broadcast Kick] Room ${roomId} is now empty after kick. Removing from active rooms map.`,
+				);
+				rooms.delete(roomId);
+			}
+		}
+	} else {
+		console.log(
+			`[Broadcast Kick] User ${userIdToKick} not found or not connected in room ${roomId}. Cannot send kick message directly.`,
+		);
 	}
 }
 
@@ -665,20 +719,21 @@ export function handleWebSocket(
 						`[WS OnClose] Removed user ${userId} connection from room ${roomId}. Remaining: ${roomConnections.size}`,
 					);
 
-					const results = await Promise.allSettled([
-						updateRoomMemberActiveStatus(roomId, userId, false),
-						broadcastRoomState(roomId),
-						broadcastGameState(roomId),
-					]);
+					if (event.reason !== "Kicked by room owner.") {
+						const results = await Promise.allSettled([
+							updateRoomMemberActiveStatus(roomId, userId, false),
+							broadcastRoomState(roomId),
+						]);
 
-					results.forEach((result, index) => {
-						if (result.status === "rejected") {
-							console.error(
-								`[WS OnClose Cleanup Error] Task ${index} failed for user ${userId}, room ${roomId}:`,
-								result.reason,
-							);
-						}
-					});
+						results.forEach((result, index) => {
+							if (result.status === "rejected") {
+								console.error(
+									`[WS OnClose Cleanup Error] Task ${index} failed for user ${userId}, room ${roomId}:`,
+									result.reason,
+								);
+							}
+						});
+					}
 
 					if (roomConnections.size === 0) {
 						console.log(
@@ -688,7 +743,7 @@ export function handleWebSocket(
 					}
 				} else {
 					console.log(
-						`[WS OnClose] onClose called for user ${userId} in room ${roomId}, but the stored WebSocket instance did not match the closing one. No cleanup performed for this specific event instance.`,
+						`[WS OnClose] onClose called for user ${userId} in room ${roomId}, but the stored WebSocket instance did not match the closing one (might have been kicked or reconnected). No cleanup performed for this specific event instance.`,
 					);
 				}
 			} else {

@@ -7,11 +7,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { user } from "../db/schema/auth";
 import { room, roomMember } from "../db/schema/rooms";
-import {
-	getNextActivePlayerSeat,
-	isBettingRoundOver,
-	startNewHand,
-} from "../lib/poker";
+import { startNewHand } from "../lib/poker";
 import {
 	cleanupAllRoomKeys,
 	cleanupRoomMessages,
@@ -33,6 +29,7 @@ import {
 	broadcastGameState,
 	broadcastRoomClosed,
 	broadcastRoomState,
+	broadcastUserKicked,
 } from "../lib/ws";
 
 const createRoomSchema = z.object({
@@ -65,6 +62,11 @@ const togglePlayStatusSchema = z.object({
 	wantsToPlay: z.boolean(),
 });
 
+const kickUserSchema = z.object({
+	roomId: z.string().min(1, "Room ID is required"),
+	userIdToKick: z.string().min(1, "User ID to kick is required"),
+});
+
 async function getUserActiveRoom(userId: string) {
 	const [activeRoom] = await db
 		.select({
@@ -89,6 +91,15 @@ function extractKeyFromUrl(imageUrl: string | null): string | null {
 		console.error("Error parsing image URL:", e);
 	}
 	return null;
+}
+
+async function isHandInProgress(roomId: string): Promise<boolean> {
+	const gameState = await getGameState(roomId);
+	return (
+		!!gameState &&
+		gameState.phase !== "waiting" &&
+		gameState.phase !== "end_hand"
+	);
 }
 
 export const appRouter = router({
@@ -198,6 +209,13 @@ export const appRouter = router({
 				throw new TRPCError({
 					code: "FORBIDDEN",
 					message: "Only the room owner can close the room",
+				});
+			}
+
+			if (await isHandInProgress(input.roomId)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Cannot close the room while a hand is in progress.",
 				});
 			}
 
@@ -353,6 +371,13 @@ export const appRouter = router({
 			const userId = ctx.session.user.id;
 			const roomId = input.roomId;
 
+			if (await isHandInProgress(roomId)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Cannot leave the room while a hand is in progress.",
+				});
+			}
+
 			const [updatedMember] = await db
 				.update(roomMember)
 				.set({ isActive: false })
@@ -369,49 +394,7 @@ export const appRouter = router({
 
 			await updateRoomMemberActiveStatus(roomId, userId, false);
 
-			const gameState = await getGameState(roomId);
-			let gameStatePromise = Promise.resolve();
-
-			if (gameState?.playerStates[userId]) {
-				const playerState = gameState.playerStates[userId];
-				if (!playerState.isFolded && !playerState.isSittingOut) {
-					playerState.isFolded = true;
-					playerState.isSittingOut = true;
-					gameState.handHistory.push(
-						`Seat ${playerState.seatNumber} left the room and folded.`,
-					);
-
-					if (gameState.currentPlayerSeat === playerState.seatNumber) {
-						gameState.currentPlayerSeat = getNextActivePlayerSeat(
-							gameState,
-							playerState.seatNumber,
-						);
-						if (gameState.currentPlayerSeat) {
-							gameState.handHistory.push(
-								`Seat ${gameState.currentPlayerSeat} is now next to act.`,
-							);
-						} else {
-							if (isBettingRoundOver(gameState)) {
-								gameState.handHistory.push("Betting round concluded.");
-							} else {
-								console.log(
-									`No next player found after Seat ${playerState.seatNumber} left and folded.`,
-								);
-							}
-						}
-					}
-					gameStatePromise = setGameState(roomId, gameState);
-				} else {
-					playerState.isSittingOut = true;
-					gameStatePromise = setGameState(roomId, gameState);
-				}
-			}
-
-			await gameStatePromise;
-			await Promise.all([
-				broadcastRoomState(roomId),
-				broadcastGameState(roomId),
-			]);
+			await Promise.all([broadcastRoomState(roomId)]);
 
 			return { success: true };
 		}),
@@ -745,6 +728,83 @@ export const appRouter = router({
 		const room = await getUserActiveRoom(ctx.session.user.id);
 		return room ?? null;
 	}),
+
+	kickUser: protectedProcedure
+		.input(kickUserSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { roomId, userIdToKick } = input;
+			const adminUserId = ctx.session.user.id;
+
+			const [targetRoom] = await db
+				.select({ ownerId: room.ownerId, isActive: room.isActive })
+				.from(room)
+				.where(eq(room.id, roomId))
+				.limit(1);
+
+			if (!targetRoom) {
+				throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
+			}
+
+			if (!targetRoom.isActive) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Cannot kick users from a closed room.",
+				});
+			}
+
+			if (targetRoom.ownerId !== adminUserId) {
+				throw new TRPCError({
+					code: "FORBIDDEN",
+					message: "Only the room owner can kick users.",
+				});
+			}
+
+			if (userIdToKick === adminUserId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "You cannot kick yourself.",
+				});
+			}
+
+			if (await isHandInProgress(roomId)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Cannot kick users while a hand is in progress.",
+				});
+			}
+
+			const [memberToKick] = await db
+				.select({ id: roomMember.id, isActive: roomMember.isActive })
+				.from(roomMember)
+				.where(
+					and(
+						eq(roomMember.roomId, roomId),
+						eq(roomMember.userId, userIdToKick),
+					),
+				)
+				.limit(1);
+
+			if (!memberToKick) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "User not found in this room.",
+				});
+			}
+			if (memberToKick.isActive) {
+				await db
+					.update(roomMember)
+					.set({ isActive: false })
+					.where(eq(roomMember.id, memberToKick.id));
+			}
+
+			await updateRoomMemberActiveStatus(roomId, userIdToKick, false);
+
+			broadcastUserKicked(roomId, userIdToKick, "Kicked by room owner.");
+
+			await broadcastRoomState(roomId);
+
+			return { success: true, message: "User kicked successfully." };
+		}),
 });
 
 export type AppRouter = typeof appRouter;
