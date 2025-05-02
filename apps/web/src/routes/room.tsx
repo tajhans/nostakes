@@ -672,71 +672,6 @@ function RouteComponent() {
 		}
 	}, [initialRoomData, members.length]);
 
-	useEffect(() => {
-		const currentPlayerState = gameState?.playerStates[session?.user?.id ?? ""];
-		const isMyTurn =
-			!!currentPlayerState &&
-			gameState?.currentPlayerSeat === currentPlayerState?.seatNumber &&
-			!currentPlayerState?.isFolded &&
-			!currentPlayerState?.isAllIn &&
-			!currentPlayerState?.isSittingOut;
-
-		if (!isMyTurn || !gameState || !initialRoomData || !currentPlayerState) {
-			return;
-		}
-
-		const currentBet = gameState.currentBet;
-		const minRaiseAmount = gameState.minRaiseAmount;
-		const playerCurrentBet = currentPlayerState.currentBet;
-		const playerStack = currentPlayerState.stack;
-
-		const canBet = currentBet === 0 && playerStack > 0;
-		const canRaise =
-			currentBet > 0 && playerStack > currentBet - playerCurrentBet;
-
-		const minBetAmount = Math.max(
-			1,
-			Math.min(initialRoomData.bigBlind, playerStack),
-		);
-		const minRaiseToAmount = Math.min(
-			currentBet + minRaiseAmount,
-			playerStack + playerCurrentBet,
-		);
-		const maxBetOrRaiseAmount = playerStack + playerCurrentBet;
-
-		let adjustedBetAmount = betAmount;
-		let adjustmentNeeded = false;
-
-		if (betAmount > 0) {
-			if (canBet) {
-				if (betAmount < minBetAmount && betAmount !== playerStack) {
-					adjustedBetAmount = minBetAmount;
-					adjustmentNeeded = true;
-				} else if (betAmount > playerStack) {
-					adjustedBetAmount = playerStack;
-					adjustmentNeeded = true;
-				}
-			} else if (canRaise) {
-				if (betAmount < minRaiseToAmount && betAmount !== maxBetOrRaiseAmount) {
-					adjustedBetAmount = minRaiseToAmount;
-					adjustmentNeeded = true;
-				} else if (betAmount > maxBetOrRaiseAmount) {
-					adjustedBetAmount = maxBetOrRaiseAmount;
-					adjustmentNeeded = true;
-				}
-			}
-		}
-
-		if (adjustmentNeeded && adjustedBetAmount !== betAmount) {
-			console.log(
-				`Adjusting bet amount from ${betAmount} to ${adjustedBetAmount}`,
-			);
-			requestAnimationFrame(() => {
-				setBetAmount(adjustedBetAmount);
-			});
-		}
-	}, [gameState, session?.user?.id, initialRoomData, betAmount]);
-
 	const sendMessage = (message: ClientChatMessage | ClientPokerAction) => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
 			console.debug("Sending WS Message:", message.type, message);
@@ -1546,16 +1481,38 @@ function RouteComponent() {
 														</Button>
 													)}
 													{canRaise && (
-														<Button
-															size="sm"
-															onClick={handleRaise}
-															disabled={
-																betAmount < minRaiseToValue ||
-																betAmount > maxBetOrRaiseValue
-															}
-														>
-															Raise to {betAmount > 0 ? betAmount : ""}
-														</Button>
+														<Tooltip>
+															<TooltipTrigger asChild>
+																<span
+																	tabIndex={
+																		betAmount < minRaiseToValue ||
+																		betAmount > maxBetOrRaiseValue
+																			? 0
+																			: -1
+																	}
+																>
+																	<Button
+																		size="sm"
+																		onClick={handleRaise}
+																		disabled={
+																			betAmount < minRaiseToValue ||
+																			betAmount > maxBetOrRaiseValue
+																		}
+																	>
+																		Raise to {betAmount > 0 ? betAmount : ""}
+																	</Button>
+																</span>
+															</TooltipTrigger>
+															{(betAmount < minRaiseToValue ||
+																betAmount > maxBetOrRaiseValue) && (
+																<TooltipContent>
+																	<p>
+																		Raise amount must be between{" "}
+																		{minRaiseToValue} and {maxBetOrRaiseValue}.
+																	</p>
+																</TooltipContent>
+															)}
+														</Tooltip>
 													)}
 												</div>
 											)}
