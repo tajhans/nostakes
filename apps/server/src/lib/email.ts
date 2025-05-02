@@ -27,3 +27,29 @@ export async function sendVerificationEmail({
 
 	return data;
 }
+
+export async function sendDeleteAccountVerification({
+	email,
+	url,
+}: {
+	email: string;
+	url: string;
+}) {
+	const { data, error } = await resend.emails.send({
+		from: "No Stakes Poker <noreply@nostakes.poker>",
+		to: email,
+		subject: "Confirm you want to delete your account",
+		html: `
+            <h1>Sorry to see you go!</h1>
+            <p>Please click the link below to confirm you want to delete your account:</p>
+            <a href="${url}">${url}</a>
+            <p>If you did not want to delete your account, change your password.</p>
+          `,
+	});
+
+	if (error) {
+		throw error;
+	}
+
+	return data;
+}

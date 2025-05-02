@@ -4,7 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { customSession, username } from "better-auth/plugins";
 import { db } from "../db";
 import * as schema from "../db/schema/auth";
-import { sendVerificationEmail } from "./email";
+import { sendDeleteAccountVerification, sendVerificationEmail } from "./email";
 import { getUserImageBase64 } from "./utils";
 
 const options = {
@@ -26,6 +26,14 @@ const options = {
 		sendOnSignUp: false,
 		autoSignInAfterVerification: true,
 		expiresIn: 3600,
+	},
+	user: {
+		deleteUser: {
+			enabled: true,
+			sendDeleteAccountVerification: async ({ user, url }) => {
+				sendDeleteAccountVerification({ email: user.email, url });
+			},
+		},
 	},
 	advanced: {
 		crossSubDomainCookies: {

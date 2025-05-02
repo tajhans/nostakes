@@ -805,6 +805,18 @@ export const appRouter = router({
 
 			return { success: true, message: "User kicked successfully." };
 		}),
+
+	checkCanDeleteAccount: protectedProcedure.mutation(async ({ ctx }) => {
+		const activeRoom = await getUserActiveRoom(ctx.session.user.id);
+		if (activeRoom) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message:
+					"You cannot delete your account while active in a room. Please leave the room first.",
+			});
+		}
+		return { canDelete: true };
+	}),
 });
 
 export type AppRouter = typeof appRouter;
