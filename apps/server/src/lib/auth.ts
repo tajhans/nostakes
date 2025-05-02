@@ -4,7 +4,11 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { customSession, username } from "better-auth/plugins";
 import { db } from "../db";
 import * as schema from "../db/schema/auth";
-import { sendDeleteAccountVerification, sendVerificationEmail } from "./email";
+import {
+	sendChangeEmailVerification,
+	sendDeleteAccountVerification,
+	sendVerificationEmail,
+} from "./email";
 import { getUserImageBase64 } from "./utils";
 
 const options = {
@@ -32,6 +36,12 @@ const options = {
 			enabled: true,
 			sendDeleteAccountVerification: async ({ user, url }) => {
 				sendDeleteAccountVerification({ email: user.email, url });
+			},
+		},
+		changeEmail: {
+			enabled: true,
+			sendChangeEmailVerification: async ({ user, newEmail, url }) => {
+				sendChangeEmailVerification({ oldEmail: user.email, newEmail, url });
 			},
 		},
 	},

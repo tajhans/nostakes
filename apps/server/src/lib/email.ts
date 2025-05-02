@@ -53,3 +53,31 @@ export async function sendDeleteAccountVerification({
 
 	return data;
 }
+
+export async function sendChangeEmailVerification({
+	oldEmail,
+	newEmail,
+	url,
+}: {
+	oldEmail: string;
+	newEmail: string;
+	url: string;
+}) {
+	const { data, error } = await resend.emails.send({
+		from: "No Stakes Poker <noreply@nostakes.poker>",
+		to: oldEmail,
+		subject: "Change email confirmation",
+		html: `
+            <h1>Confirm you want to change your email.</h1>
+            <p>Please click the link below to confirm you want to change your email to ${newEmail}:</p>
+            <a href="${url}">${url}</a>
+            <p>If you did not want to change your email, change your password.</p>
+          `,
+	});
+
+	if (error) {
+		throw error;
+	}
+
+	return data;
+}
