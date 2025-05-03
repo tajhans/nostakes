@@ -14,11 +14,17 @@ export async function sendVerificationEmail({
 	email: string;
 	url: string;
 }) {
+	const html = await render(<VerificationEmail email={email} url={url} />);
+	const text = await render(<VerificationEmail email={email} url={url} />, {
+		plainText: true,
+	});
+
 	const { data, error } = await resend.emails.send({
-		from: "No Stakes Poker <noreply@nostakes.poker>",
+		from: "No Stakes Poker <support@nostakes.poker>",
 		to: email,
 		subject: "Verify your email address",
-		react: <VerificationEmail email={email} url={url} />,
+		html,
+		text,
 	});
 
 	if (error) {
@@ -36,11 +42,22 @@ export async function sendDeleteAccountVerification({
 	email: string;
 	url: string;
 }) {
+	const html = await render(
+		<DeleteAccountVerification email={email} url={url} />,
+	);
+	const text = await render(
+		<DeleteAccountVerification email={email} url={url} />,
+		{
+			plainText: true,
+		},
+	);
+
 	const { data, error } = await resend.emails.send({
-		from: "No Stakes Poker <noreply@nostakes.poker>",
+		from: "No Stakes Poker <support@nostakes.poker>",
 		to: email,
 		subject: "Confirm Account Deletion",
-		react: <DeleteAccountVerification email={email} url={url} />,
+		html,
+		text,
 	});
 
 	if (error) {
@@ -60,17 +77,28 @@ export async function sendChangeEmailVerification({
 	newEmail: string;
 	url: string;
 }) {
+	const html = await render(
+		<ChangeEmailVerification
+			oldEmail={oldEmail}
+			newEmail={newEmail}
+			url={url}
+		/>,
+	);
+	const text = await render(
+		<ChangeEmailVerification
+			oldEmail={oldEmail}
+			newEmail={newEmail}
+			url={url}
+		/>,
+		{ plainText: true },
+	);
+
 	const { data, error } = await resend.emails.send({
-		from: "No Stakes Poker <noreply@nostakes.poker>",
+		from: "No Stakes Poker <support@nostakes.poker>",
 		to: oldEmail,
 		subject: "Confirm Email Change",
-		react: (
-			<ChangeEmailVerification
-				oldEmail={oldEmail}
-				newEmail={newEmail}
-				url={url}
-			/>
-		),
+		html,
+		text,
 	});
 
 	if (error) {
@@ -88,11 +116,17 @@ export async function sendResetPassword({
 	email: string;
 	url: string;
 }) {
+	const html = await render(<ResetPassword email={email} url={url} />);
+	const text = await render(<ResetPassword email={email} url={url} />, {
+		plainText: true,
+	});
+
 	const { data, error } = await resend.emails.send({
-		from: "No Stakes Poker <noreply@nostakes.poker>",
+		from: "No Stakes Poker <support@nostakes.poker>",
 		to: email,
 		subject: "Reset Your Password",
-		react: <ResetPassword email={email} url={url} />,
+		html,
+		text,
 	});
 
 	if (error) {
