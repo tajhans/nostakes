@@ -20,6 +20,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { UpdateMaxPlayersDialog } from "@/components/update-max-players-dialog";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/utils/trpc";
@@ -855,6 +856,9 @@ function RouteComponent() {
 		(m) => m.wantsToPlayNextHand === true,
 	).length;
 
+	const canUpdateMaxPlayers =
+		isAdmin && room.isActive && room.maxPlayers < 8 && isConnected;
+
 	const canStartGame =
 		isAdmin &&
 		room.isActive &&
@@ -1019,6 +1023,13 @@ function RouteComponent() {
 									>
 										{togglePlay.isPending ? "..." : playButtonText}
 									</Button>
+								)}
+								{canUpdateMaxPlayers && (
+									<UpdateMaxPlayersDialog
+										roomId={roomId}
+										currentMaxPlayers={room.maxPlayers}
+										currentActivePlayers={activeMembers.length}
+									/>
 								)}
 								{isAdmin && room.isActive && (
 									<Dialog

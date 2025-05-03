@@ -1,6 +1,6 @@
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, lte, sql } from "drizzle-orm";
 import { getPlaiceholder } from "plaiceholder";
 import sharp from "sharp";
 import { z } from "zod";
@@ -72,6 +72,15 @@ const transferChipsSchema = z.object({
 	roomId: z.string().min(1, "Room ID is required"),
 	recipientUserId: z.string().min(1, "Recipient User ID is required"),
 	amount: z.number().int().positive("Amount must be a positive integer"),
+});
+
+const updateMaxPlayersSchema = z.object({
+	roomId: z.string().min(1, "Room ID is required"),
+	newMaxPlayers: z
+		.number()
+		.int()
+		.min(2, "Minimum players must be 2")
+		.max(8, "Maximum players cannot exceed 8"),
 });
 
 async function getUserActiveRoom(userId: string) {
@@ -885,6 +894,79 @@ export const appRouter = router({
 			await broadcastRoomState(roomId);
 
 			return { success: true, message: result.message };
+		}),
+
+	updateMaxPlayers: protectedProcedure
+		.input(updateMaxPlayersSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { roomId, newMaxPlayers } = input;
+			const userId = ctx.session.user.id;
+
+			const [targetRoom] = await db
+				.select({
+					ownerId: room.ownerId,
+					currentMaxPlayers: room.maxPlayers,
+					isActive: room.isActive,
+				})
+				.from(room)
+				.where(eq(room.id, roomId))
+				.limit(1);
+
+			if (!targetRoom) {
+				throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
+			}
+
+			if (!targetRoom.isActive) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Cannot modify a closed room.",
+				});
+			}
+
+			if (targetRoom.ownerId !== userId) {
+				throw new TRPCError({
+					code: "FORBIDDEN",
+					message: "Only the room owner can change the maximum players.",
+				});
+			}
+
+			if (newMaxPlayers <= targetRoom.currentMaxPlayers) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: `New maximum players (${newMaxPlayers}) must be greater than the current maximum (${targetRoom.currentMaxPlayers}).`,
+				});
+			}
+
+			const currentMembers = await getAllRoomMembers(roomId);
+			const activeMemberCount = currentMembers.filter((m) => m.isActive).length;
+
+			if (newMaxPlayers < activeMemberCount) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: `New maximum players (${newMaxPlayers}) cannot be less than the current number of active players (${activeMemberCount}).`,
+				});
+			}
+
+			const [updatedRoom] = await db
+				.update(room)
+				.set({ maxPlayers: newMaxPlayers, updatedAt: new Date() })
+				.where(eq(room.id, roomId))
+				.returning({ id: room.id, maxPlayers: room.maxPlayers });
+
+			if (!updatedRoom) {
+				throw new TRPCError({
+					code: "INTERNAL_SERVER_ERROR",
+					message: "Failed to update room settings.",
+				});
+			}
+
+			await broadcastRoomState(roomId);
+
+			return {
+				success: true,
+				message: `Maximum players updated to ${updatedRoom.maxPlayers}.`,
+				newMaxPlayers: updatedRoom.maxPlayers,
+			};
 		}),
 });
 
