@@ -3,7 +3,7 @@
 	"main": "src/index.ts",
 	"type": "module",
 	"scripts": {
-		"build": "tsc && tsc-alias",
+		"build": "tsc && tsc-alias && echo '--- Contents of dist directory: ---' && ls -R dist",
 		"check-types": "tsc --noEmit",
 		"compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
 		"dev": "bun run --hot src/index.ts",
