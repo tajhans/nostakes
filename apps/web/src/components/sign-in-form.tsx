@@ -1,6 +1,6 @@
 import { authClient } from "@/lib/auth-client";
 import { useForm } from "@tanstack/react-form";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { z } from "zod";
 import Loader from "./loader";
@@ -109,6 +109,14 @@ export default function SignInForm({
 							</div>
 						)}
 					</form.Field>
+				</div>
+
+				<div className="text-right">
+					<Link to="/forgot-password" tabIndex={-1}>
+						<Button type="button" variant="link" className="h-auto p-0">
+							Forgot password?
+						</Button>
+					</Link>
 				</div>
 
 				<form.Subscribe>

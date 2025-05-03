@@ -38,7 +38,7 @@ export async function sendDeleteAccountVerification({
 	const { data, error } = await resend.emails.send({
 		from: "No Stakes Poker <noreply@nostakes.poker>",
 		to: email,
-		subject: "Confirm you want to delete your account",
+		subject: "Reset your password",
 		html: `
             <h1>Sorry to see you go!</h1>
             <p>Please click the link below to confirm you want to delete your account:</p>
@@ -73,6 +73,32 @@ export async function sendChangeEmailVerification({
             <a href="${url}">${url}</a>
             <p>If you did not want to change your email, change your password.</p>
           `,
+	});
+
+	if (error) {
+		throw error;
+	}
+
+	return data;
+}
+
+export async function sendResetPassword({
+	email,
+	url,
+}: {
+	email: string;
+	url: string;
+}) {
+	const { data, error } = await resend.emails.send({
+		from: "No Stakes Poker <noreply@nostakes.poker>",
+		to: email,
+		subject: "Change your password",
+		html: `
+             <h1>Reset Your Password</h1>
+             <p>You requested to reset your password. Click the link below to set a new password:</p>
+             <a href="${url}">${url}</a>
+             <p>If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged.</p>
+           `,
 	});
 
 	if (error) {

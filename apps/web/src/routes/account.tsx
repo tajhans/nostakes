@@ -183,7 +183,6 @@ function RouteComponent() {
 						{session.user.image && (
 							<Button
 								variant="outline"
-								size="sm"
 								onClick={() => updateProfile.mutate(null)}
 								disabled={updateProfile.isPending}
 							>

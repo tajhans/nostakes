@@ -7,6 +7,7 @@ import * as schema from "../db/schema/auth";
 import {
 	sendChangeEmailVerification,
 	sendDeleteAccountVerification,
+	sendResetPassword,
 	sendVerificationEmail,
 } from "./email";
 import { getUserImageBase64 } from "./utils";
@@ -19,6 +20,9 @@ const options = {
 	trustedOrigins: [process.env.CORS_ORIGIN || ""],
 	emailAndPassword: {
 		enabled: true,
+		sendResetPassword: async ({ user, url }) => {
+			await sendResetPassword({ email: user.email, url });
+		},
 	},
 	emailVerification: {
 		sendVerificationEmail: async ({ user, url }) => {
