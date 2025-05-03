@@ -35,8 +35,10 @@
 		"zod": "^3.24.2"
 	},
 	"devDependencies": {
+		"@types/react": "^19.1.2",
+		"drizzle-kit": "^0.30.5",
+		"react": "^19.1.0",
 		"tsc-alias": "^1.8.11",
-		"typescript": "^5.8.2",
-		"drizzle-kit": "^0.30.5"
+		"typescript": "^5.8.2"
 	}
 }

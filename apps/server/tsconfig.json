@@ -8,8 +8,7 @@
 		"skipLibCheck": true,
 		"baseUrl": "./",
 		"outDir": "./dist",
-		"jsx": "react-jsx",
-		"jsxImportSource": "hono/jsx"
+		"jsx": "react-jsx"
 	},
 	"tsc-alias": {
 		"resolveFullPaths": true
