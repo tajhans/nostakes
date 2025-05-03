@@ -1,6 +1,7 @@
 import { HandHistory } from "@/components/hand-history";
 import { RoomChat } from "@/components/room-chat";
 import { RoomSkeleton } from "@/components/room-skeleton";
+import { TransferChipsDialog } from "@/components/transfer-chips-dialog";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -115,7 +116,7 @@ interface MessageHistory {
 	messages: ChatMessage[];
 }
 
-interface RoomMemberInfo {
+export interface RoomMemberInfo {
 	userId: string;
 	username: string;
 	seatNumber: number;
@@ -933,6 +934,16 @@ function RouteComponent() {
 	const leaveRoomDisabled =
 		leaveRoom.isPending || !isConnected || isHandInProgress;
 
+	const transferChipsDisabled =
+		!isConnected || isHandInProgress || !currentUserMemberInfo?.isActive;
+	const transferChipsDisabledReason = !isConnected
+		? "Not connected to server"
+		: isHandInProgress
+			? handInProgressReason
+			: !currentUserMemberInfo?.isActive
+				? "You are not active in the room"
+				: "";
+
 	return (
 		<TooltipProvider>
 			<div className="container mx-auto max-w-5xl px-4 py-2">
@@ -987,6 +998,16 @@ function RouteComponent() {
 							</div>
 
 							<div className="flex flex-wrap items-center justify-end gap-2">
+								{currentUserMemberInfo?.isActive && (
+									<TransferChipsDialog
+										roomId={roomId}
+										currentUserId={session.user.id}
+										members={members}
+										currentUserStack={currentUserMemberInfo.currentStack}
+										disabled={transferChipsDisabled}
+										disabledReason={transferChipsDisabledReason}
+									/>
+								)}
 								{showPlayButton && (
 									<Button
 										variant={wantsToPlay ? "secondary" : "outline"}

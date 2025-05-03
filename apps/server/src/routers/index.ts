@@ -19,6 +19,7 @@ import {
 	resetAllWantsToPlayStatuses,
 	setGameState,
 	setRoomMember,
+	transferChips,
 	updateRoomMemberActiveStatus,
 	updateWantsToPlayStatus,
 } from "../lib/redis";
@@ -65,6 +66,12 @@ const togglePlayStatusSchema = z.object({
 const kickUserSchema = z.object({
 	roomId: z.string().min(1, "Room ID is required"),
 	userIdToKick: z.string().min(1, "User ID to kick is required"),
+});
+
+const transferChipsSchema = z.object({
+	roomId: z.string().min(1, "Room ID is required"),
+	recipientUserId: z.string().min(1, "Recipient User ID is required"),
+	amount: z.number().int().positive("Amount must be a positive integer"),
 });
 
 async function getUserActiveRoom(userId: string) {
@@ -817,6 +824,68 @@ export const appRouter = router({
 		}
 		return { canDelete: true };
 	}),
+
+	transferChips: protectedProcedure
+		.input(transferChipsSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { roomId, recipientUserId, amount } = input;
+			const senderUserId = ctx.session.user.id;
+
+			if (senderUserId === recipientUserId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "You cannot transfer chips to yourself.",
+				});
+			}
+
+			if (await isHandInProgress(roomId)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Cannot transfer chips while a hand is in progress.",
+				});
+			}
+
+			const senderMemberInfo = await getRoomMember(roomId, senderUserId);
+
+			if (!senderMemberInfo) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Sender not found in the room.",
+				});
+			}
+
+			if (!senderMemberInfo.isActive) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "You must be active in the room to transfer chips.",
+				});
+			}
+
+			if (senderMemberInfo.currentStack < amount) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: `Insufficient chips. You only have ${senderMemberInfo.currentStack}.`,
+				});
+			}
+
+			const result = await transferChips(
+				roomId,
+				senderUserId,
+				recipientUserId,
+				amount,
+			);
+
+			if (!result.success) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: result.message,
+				});
+			}
+
+			await broadcastRoomState(roomId);
+
+			return { success: true, message: result.message };
+		}),
 });
 
 export type AppRouter = typeof appRouter;

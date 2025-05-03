@@ -289,3 +289,81 @@ export async function cleanupAllRoomKeys(roomId: string): Promise<void> {
 		throw error;
 	}
 }
+
+export async function transferChips(
+	roomId: string,
+	senderUserId: string,
+	recipientUserId: string,
+	amount: number,
+): Promise<{ success: boolean; message: string }> {
+	if (amount <= 0) {
+		return { success: false, message: "Transfer amount must be positive." };
+	}
+	if (senderUserId === recipientUserId) {
+		return { success: false, message: "Cannot transfer chips to yourself." };
+	}
+
+	const key = getRoomMembersKey(roomId);
+
+	try {
+		const sender = await redis.hget<RoomMemberInfo>(key, senderUserId);
+		const recipient = await redis.hget<RoomMemberInfo>(key, recipientUserId);
+
+		if (!sender) {
+			return { success: false, message: "Sender not found in the room." };
+		}
+		if (!recipient) {
+			return { success: false, message: "Recipient not found in the room." };
+		}
+		if (!sender.isActive) {
+			return { success: false, message: "Sender is not active in the room." };
+		}
+		if (!recipient.isActive) {
+			return {
+				success: false,
+				message: "Recipient is not active in the room.",
+			};
+		}
+
+		if (sender.currentStack < amount) {
+			return { success: false, message: "Insufficient chips." };
+		}
+
+		const updatedSender: RoomMemberInfo = {
+			...sender,
+			currentStack: sender.currentStack - amount,
+		};
+		const updatedRecipient: RoomMemberInfo = {
+			...recipient,
+			currentStack: recipient.currentStack + amount,
+		};
+
+		const result = await redis.hset(key, {
+			[senderUserId]: updatedSender,
+			[recipientUserId]: updatedRecipient,
+		});
+
+		if (result === 0 || result === 1 || result === 2) {
+			console.log(
+				`Chip transfer successful: ${amount} from ${senderUserId} to ${recipientUserId} in room ${roomId}`,
+			);
+			return { success: true, message: "Chips transferred successfully." };
+		}
+		console.error(
+			`Unexpected HSET result during chip transfer: ${result}. Reverting may not be possible easily.`,
+		);
+		return {
+			success: false,
+			message: "Failed to update chip counts reliably.",
+		};
+	} catch (error) {
+		console.error(
+			`Failed to transfer chips from ${senderUserId} to ${recipientUserId} in room ${roomId}:`,
+			error,
+		);
+		return {
+			success: false,
+			message: "An error occurred during the transfer.",
+		};
+	}
+}
