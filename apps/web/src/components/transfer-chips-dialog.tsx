@@ -24,13 +24,13 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { RoomMemberInfo } from "@/types";
 import { trpcClient } from "@/utils/trpc";
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
-import type { RoomMemberInfo } from "../routes/room";
 
 interface TransferChipsDialogProps {
 	roomId: string;

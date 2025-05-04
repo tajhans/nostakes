@@ -1,14 +1,8 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { GamePhase, Rank, Suit } from "@/routes/room";
+import type { GamePhase, Rank, Suit } from "@/types";
 import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "../lib/utils";
-
-interface CardComponentProps {
-	rank: Rank;
-	suit: Suit;
-	size?: "sm" | "md" | "lg";
-}
 
 interface HandHistoryProps {
 	history: string[];

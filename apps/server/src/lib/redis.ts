@@ -1,31 +1,12 @@
 import { Redis } from "@upstash/redis";
-import type { GameState } from "./poker";
+import type { ChatMessage, GameState, RoomMemberInfo } from "../types";
 
 export const redis = new Redis({
 	url: process.env.UPSTASH_REDIS_REST_URL || "",
 	token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
 });
 
-interface ChatMessage {
-	type: "chat";
-	id: string;
-	roomId: string;
-	userId: string;
-	username: string;
-	message: string;
-	timestamp: number;
-}
-
 const ROOM_MESSAGES_EXPIRY = 60 * 60 * 24;
-
-export interface RoomMemberInfo {
-	userId: string;
-	username: string;
-	seatNumber: number;
-	currentStack: number;
-	isActive: boolean;
-	wantsToPlayNextHand?: boolean;
-}
 
 const ROOM_GAME_STATE_KEY_PREFIX = "room_game";
 const ROOM_MEMBERS_KEY_PREFIX = "room_members";

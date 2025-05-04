@@ -1,6 +1,6 @@
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gt, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getPlaiceholder } from "plaiceholder";
 import sharp from "sharp";
 import { z } from "zod";
@@ -23,7 +23,6 @@ import {
 	updateRoomMemberActiveStatus,
 	updateWantsToPlayStatus,
 } from "../lib/redis";
-import type { RoomMemberInfo } from "../lib/redis";
 import { s3Client } from "../lib/s3";
 import { protectedProcedure, publicProcedure, router } from "../lib/trpc";
 import {
@@ -32,6 +31,7 @@ import {
 	broadcastRoomState,
 	broadcastUserKicked,
 } from "../lib/ws";
+import type { RoomMemberInfo } from "../types";
 
 const createRoomSchema = z.object({
 	players: z.number().min(2, "Minimum 2 players").max(8, "Maximum 8 players"),

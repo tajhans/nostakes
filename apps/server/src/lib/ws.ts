@@ -3,7 +3,22 @@ import { type Operation, compare } from "fast-json-patch";
 import type { WSContext } from "hono/ws";
 import { produce } from "immer";
 import { nanoid } from "nanoid";
-import type { GameState, PlayerState } from "./poker";
+import type {
+	ChatMessage,
+	ClientPokerAction,
+	ClientWebSocketMessage,
+	ErrorMessage,
+	GameState,
+	GameStatePatchMessage,
+	GameStateUpdate,
+	MessageHistory,
+	PlayerState,
+	RoomClosed,
+	RoomMemberInfo,
+	RoomStateUpdate,
+	ServerWebSocketMessage,
+	UserKickedMessage,
+} from "../types";
 import { performAction } from "./poker";
 import {
 	getAllRoomMembers,
@@ -15,100 +30,6 @@ import {
 	storeMessage,
 	updateRoomMemberActiveStatus,
 } from "./redis";
-import type { RoomMemberInfo } from "./redis";
-
-interface ChatMessage {
-	type: "chat";
-	id: string;
-	roomId: string;
-	userId: string;
-	username: string;
-	message: string;
-	timestamp: number;
-}
-
-interface MessageHistory {
-	type: "history";
-	messages: ChatMessage[];
-}
-
-interface RoomStateUpdate {
-	type: "room_state";
-	members: RoomMemberInfo[];
-}
-
-interface RoomClosed {
-	type: "room_closed";
-}
-
-type ClientGameState = Omit<GameState, "deck">;
-
-interface GameStateUpdate {
-	type: "game_state";
-	gameState: ClientGameState;
-}
-
-interface ErrorMessage {
-	type: "error";
-	message: string;
-}
-
-interface UserKickedMessage {
-	type: "user_kicked";
-	reason: string;
-}
-
-interface GameStatePatchMessage {
-	type: "game_state_patch";
-	patches: Operation[];
-}
-
-type ServerWebSocketMessage =
-	| ChatMessage
-	| MessageHistory
-	| RoomStateUpdate
-	| RoomClosed
-	| GameStateUpdate
-	| GameStatePatchMessage
-	| UserKickedMessage
-	| ErrorMessage;
-
-interface ClientChatMessage {
-	type: "chat";
-	message: string;
-}
-
-interface ClientFoldAction {
-	type: "action";
-	action: "fold";
-}
-interface ClientCheckAction {
-	type: "action";
-	action: "check";
-}
-interface ClientCallAction {
-	type: "action";
-	action: "call";
-}
-interface ClientBetAction {
-	type: "action";
-	action: "bet";
-	amount: number;
-}
-interface ClientRaiseAction {
-	type: "action";
-	action: "raise";
-	amount: number;
-}
-
-type ClientPokerAction =
-	| ClientFoldAction
-	| ClientCheckAction
-	| ClientCallAction
-	| ClientBetAction
-	| ClientRaiseAction;
-
-type ClientWebSocketMessage = ClientChatMessage | ClientPokerAction;
 
 const rooms = new Map<
 	string,

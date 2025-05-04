@@ -1,26 +1,6 @@
 import { produce } from "immer";
-import type { RoomMemberInfo } from "./redis";
 
-export type Suit = "C" | "D" | "H" | "S";
-export type Rank =
-	| "2"
-	| "3"
-	| "4"
-	| "5"
-	| "6"
-	| "7"
-	| "8"
-	| "9"
-	| "T"
-	| "J"
-	| "Q"
-	| "K"
-	| "A";
-
-export interface Card {
-	rank: Rank;
-	suit: Suit;
-}
+import type { Card, Rank, RoomMemberInfo, Suit } from "../types";
 
 export const SUITS: Suit[] = ["C", "D", "H", "S"];
 export const RANKS: Rank[] = [

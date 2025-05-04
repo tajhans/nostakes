@@ -28,173 +28,22 @@ import { trpcClient } from "@/utils/trpc";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { TRPCClientError } from "@trpc/client";
-import { type Operation, applyPatch } from "fast-json-patch";
+import { applyPatch } from "fast-json-patch";
 import { Check, Circle, CircleDot, Copy, UserX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { suitMap } from "../components/hand-history";
 
-export type Suit = "C" | "D" | "H" | "S";
-export type Rank =
-	| "2"
-	| "3"
-	| "4"
-	| "5"
-	| "6"
-	| "7"
-	| "8"
-	| "9"
-	| "T"
-	| "J"
-	| "Q"
-	| "K"
-	| "A";
-
-interface Card {
-	rank: Rank;
-	suit: Suit;
-}
-
-export type GamePhase =
-	| "waiting"
-	| "preflop"
-	| "flop"
-	| "turn"
-	| "river"
-	| "showdown"
-	| "end_hand";
-
-interface PlayerState {
-	userId: string;
-	seatNumber: number;
-	stack: number;
-	hand: Card[];
-	currentBet: number;
-	totalBet: number;
-	hasActed: boolean;
-	isFolded: boolean;
-	isAllIn: boolean;
-	isSittingOut: boolean;
-}
-
-interface GameState {
-	roomId: string;
-	phase: GamePhase;
-	communityCards: Card[];
-	pot: number;
-	currentBet: number;
-	minRaiseAmount: number;
-	dealerSeat: number;
-	smallBlindSeat: number;
-	bigBlindSeat: number;
-	currentPlayerSeat: number | null;
-	lastActionPlayerSeat: number | null;
-	playerStates: Record<string, PlayerState>;
-	handHistory: string[];
-	lastUpdateTime: number;
-	roomConfig: { smallBlind: number; bigBlind: number; ante: number };
-}
-
-type ClientGameState = GameState;
-
-interface ChatMessage {
-	type: "chat";
-	id: string;
-	roomId: string;
-	userId: string;
-	username: string;
-	message: string;
-	timestamp: number;
-}
-
-interface ClientChatMessage {
-	type: "chat";
-	message: string;
-}
-
-interface MessageHistory {
-	type: "history";
-	messages: ChatMessage[];
-}
-
-export interface RoomMemberInfo {
-	userId: string;
-	username: string;
-	seatNumber: number;
-	currentStack: number;
-	isActive: boolean;
-	wantsToPlayNextHand?: boolean;
-	id?: string;
-	image?: string | null;
-	joinedAt?: Date;
-}
-
-interface RoomStateUpdate {
-	type: "room_state";
-	members: RoomMemberInfo[];
-}
-
-interface RoomClosed {
-	type: "room_closed";
-}
-
-interface GameStateUpdate {
-	type: "game_state";
-	gameState: ClientGameState;
-}
-
-interface GameStatePatchMessage {
-	type: "game_state_patch";
-	patches: Operation[];
-}
-
-type ClientPokerAction =
-	| { type: "action"; action: "fold" }
-	| { type: "action"; action: "check" }
-	| { type: "action"; action: "call" }
-	| { type: "action"; action: "bet"; amount: number }
-	| { type: "action"; action: "raise"; amount: number };
-
-interface ErrorMessage {
-	type: "error";
-	message: string;
-}
-
-interface UserKickedMessage {
-	type: "user_kicked";
-	reason: string;
-}
-
-type ServerWebSocketMessage =
-	| ChatMessage
-	| MessageHistory
-	| RoomStateUpdate
-	| RoomClosed
-	| GameStateUpdate
-	| GameStatePatchMessage
-	| UserKickedMessage
-	| ErrorMessage;
-
-interface RoomData {
-	id: string;
-	createdAt: string;
-	startingStack: number;
-	smallBlind: number;
-	bigBlind: number;
-	ante: number;
-	joinCode: string;
-	maxPlayers: number;
-	isActive: boolean;
-	ownerId: string;
-	members: RoomMemberInfo[];
-	filterProfanity: boolean;
-}
-
-interface CardComponentProps {
-	rank: Rank;
-	suit: Suit;
-	size?: "sm" | "md" | "lg";
-}
+import type {
+	CardComponentProps,
+	ChatMessage,
+	ClientChatMessage,
+	ClientPokerAction,
+	GameState,
+	RoomData,
+	RoomMemberInfo,
+	ServerWebSocketMessage,
+} from "@/types";
 
 const CardComponent: React.FC<CardComponentProps> = ({
 	rank,
@@ -283,7 +132,7 @@ function RouteComponent() {
 	const [members, setMembers] = useState<RoomMemberInfo[]>([]);
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 	const [isConnected, setIsConnected] = useState(false);
-	const [gameState, setGameState] = useState<ClientGameState | null>(null);
+	const [gameState, setGameState] = useState<GameState | null>(null);
 	const wsRef = useRef<WebSocket | null>(null);
 	const [betAmount, setBetAmount] = useState<number>(0);
 	const [isCopied, setIsCopied] = useState(false);
@@ -544,7 +393,7 @@ function RouteComponent() {
 								if (phaseChanged || turnChanged) {
 									setBetAmount(0);
 								}
-								return newDocument as ClientGameState;
+								return newDocument as GameState;
 							} catch (error) {
 								console.error("Failed to apply game state patches:", error);
 								toast.error(
@@ -951,7 +800,7 @@ function RouteComponent() {
 	return (
 		<TooltipProvider>
 			<div className="container mx-auto max-w-5xl px-4 py-2">
-				<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
+				<div className="grid gap-4 lg:grid-cols-[minmax(300px,1fr)_2fr]">
 					<div className="space-y-4">
 						<div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
 							<div className="flex items-center gap-2">
@@ -1205,6 +1054,18 @@ function RouteComponent() {
 							</div>
 						</div>
 
+						<div className="h-full">
+							<RoomChat
+								messages={chatMessages}
+								sendMessage={sendChatMessage}
+								isConnected={isConnected}
+								currentUserId={session.user.id}
+								filterProfanity={room.filterProfanity}
+							/>
+						</div>
+					</div>
+
+					<div className="space-y-4">
 						<div className="rounded-lg border p-4">
 							<h2 className="mb-2 font-medium">Players</h2>
 							{members.length > 0 ? (
@@ -1409,7 +1270,7 @@ function RouteComponent() {
 							)}
 						</div>
 
-						<div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border p-4">
+						<div className="flex flex-col items-center justify-center rounded-lg border p-4">
 							<h2 className="mb-4 font-medium">
 								Game Phase:{" "}
 								<span className="font-semibold">
@@ -1600,14 +1461,6 @@ function RouteComponent() {
 							)}
 						</div>
 					</div>
-
-					<RoomChat
-						messages={chatMessages}
-						sendMessage={sendChatMessage}
-						isConnected={isConnected}
-						currentUserId={session.user.id}
-						filterProfanity={room.filterProfanity}
-					/>
 				</div>
 			</div>
 		</TooltipProvider>

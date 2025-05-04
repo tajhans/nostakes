@@ -6,15 +6,7 @@ import { Filter } from "bad-words";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-interface ChatMessage {
-	id: string;
-	type: "chat";
-	roomId: string;
-	userId: string;
-	username: string;
-	message: string;
-	timestamp: number;
-}
+import type { ChatMessage } from "@/types";
 
 interface RoomChatProps {
 	messages: ChatMessage[];
