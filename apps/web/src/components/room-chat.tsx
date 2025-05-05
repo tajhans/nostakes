@@ -1,8 +1,17 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Filter } from "bad-words";
+import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -14,6 +23,9 @@ interface RoomChatProps {
 	isConnected: boolean;
 	currentUserId: string;
 	filterProfanity?: boolean;
+	isAdmin?: boolean;
+	onToggleFilter?: (enabled: boolean) => void;
+	isUpdatingFilter?: boolean;
 }
 
 interface GroupedMessage extends ChatMessage {
@@ -21,7 +33,7 @@ interface GroupedMessage extends ChatMessage {
 	isCurrentUser: boolean;
 }
 
-const MAX_MESSAGE_LENGTH = 32;
+const MAX_MESSAGE_LENGTH = 64;
 const MIN_MESSAGE_INTERVAL = 2000;
 
 export function RoomChat({
@@ -30,6 +42,9 @@ export function RoomChat({
 	isConnected,
 	currentUserId,
 	filterProfanity = false,
+	isAdmin = false,
+	onToggleFilter,
+	isUpdatingFilter = false,
 }: RoomChatProps) {
 	const [messageInput, setMessageInput] = useState("");
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -92,9 +107,37 @@ export function RoomChat({
 		<div className="flex h-full flex-col overflow-hidden rounded-lg border p-4">
 			<div className="mb-2 flex items-center gap-2">
 				<h2 className="font-medium">Chat</h2>
-				<Badge variant="secondary" className="text-sm">
-					{filterProfanity ? "Profanity Filter On" : "Unfiltered"}
-				</Badge>
+				<TooltipProvider>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Badge variant="secondary" className="text-sm">
+								{filterProfanity ? "Filtered" : "Unfiltered"}
+							</Badge>
+						</TooltipTrigger>
+						<TooltipContent>
+							{filterProfanity
+								? "Profanity is being filtered from messages"
+								: "Messages are not being filtered for profanity"}
+						</TooltipContent>
+					</Tooltip>
+				</TooltipProvider>
+				{isAdmin && onToggleFilter && (
+					<div className="ml-auto flex items-center gap-2">
+						<Label htmlFor="chat-filter" className="text-sm">
+							Filter Chat
+						</Label>
+						<Switch
+							id="chat-filter"
+							checked={filterProfanity}
+							onCheckedChange={onToggleFilter}
+							disabled={!isConnected || isUpdatingFilter}
+							aria-label="Toggle chat profanity filter"
+						/>
+						{isUpdatingFilter && (
+							<Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+						)}
+					</div>
+				)}
 			</div>
 			<ScrollArea ref={scrollAreaRef} className="h-0 flex-grow" type="always">
 				<div className="space-y-1 pr-4 pb-4">

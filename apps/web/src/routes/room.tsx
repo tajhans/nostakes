@@ -14,6 +14,8 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
 	Tooltip,
 	TooltipContent,
@@ -25,7 +27,7 @@ import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/utils/trpc";
 import { trpcClient } from "@/utils/trpc";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { TRPCClientError } from "@trpc/client";
 import { applyPatch } from "fast-json-patch";
@@ -128,6 +130,7 @@ function RouteComponent() {
 	const { data: session, isPending: isSessionPending } =
 		authClient.useSession();
 	const navigate = useNavigate({ from: Route.fullPath });
+	const queryClient = useQueryClient();
 
 	const [members, setMembers] = useState<RoomMemberInfo[]>([]);
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -247,6 +250,22 @@ function RouteComponent() {
 		onError: (error) => {
 			toast.error(`Failed to kick user: ${error.message}`);
 			setUserToKick(null);
+		},
+	});
+
+	const updateFilter = useMutation({
+		mutationFn: async (variables: {
+			roomId: string;
+			filterProfanity: boolean;
+		}) => {
+			return trpcClient.updateRoomFilter.mutate(variables);
+		},
+		onSuccess: (data) => {
+			toast.success(data.message);
+			queryClient.invalidateQueries({ queryKey: trpc.getRooms.queryKey() });
+		},
+		onError: (error) => {
+			toast.error(`Failed to update filter: ${error.message}`);
 		},
 	});
 
@@ -1456,6 +1475,18 @@ function RouteComponent() {
 						isConnected={isConnected}
 						currentUserId={session.user.id}
 						filterProfanity={room.filterProfanity}
+						isAdmin={isAdmin}
+						onToggleFilter={
+							isAdmin
+								? (enabled) => {
+										updateFilter.mutate({
+											roomId,
+											filterProfanity: enabled,
+										});
+									}
+								: undefined
+						}
+						isUpdatingFilter={updateFilter.isPending}
 					/>
 				</div>
 			</div>
