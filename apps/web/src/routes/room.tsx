@@ -800,7 +800,7 @@ function RouteComponent() {
 	return (
 		<TooltipProvider>
 			<div className="container mx-auto max-w-5xl px-4 py-2">
-				<div className="grid gap-4 lg:grid-cols-[minmax(300px,1fr)_2fr]">
+				<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
 					<div className="space-y-4">
 						<div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
 							<div className="flex items-center gap-2">
@@ -1054,18 +1054,6 @@ function RouteComponent() {
 							</div>
 						</div>
 
-						<div className="h-full">
-							<RoomChat
-								messages={chatMessages}
-								sendMessage={sendChatMessage}
-								isConnected={isConnected}
-								currentUserId={session.user.id}
-								filterProfanity={room.filterProfanity}
-							/>
-						</div>
-					</div>
-
-					<div className="space-y-4">
 						<div className="rounded-lg border p-4">
 							<h2 className="mb-2 font-medium">Players</h2>
 							{members.length > 0 ? (
@@ -1270,7 +1258,7 @@ function RouteComponent() {
 							)}
 						</div>
 
-						<div className="flex flex-col items-center justify-center rounded-lg border p-4">
+						<div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border p-4">
 							<h2 className="mb-4 font-medium">
 								Game Phase:{" "}
 								<span className="font-semibold">
@@ -1461,6 +1449,14 @@ function RouteComponent() {
 							)}
 						</div>
 					</div>
+
+					<RoomChat
+						messages={chatMessages}
+						sendMessage={sendChatMessage}
+						isConnected={isConnected}
+						currentUserId={session.user.id}
+						filterProfanity={room.filterProfanity}
+					/>
 				</div>
 			</div>
 		</TooltipProvider>
