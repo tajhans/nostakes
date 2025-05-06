@@ -162,7 +162,7 @@ export function RoomChat({
 										: "bg-muted"
 								}`}
 							>
-								<p className="break-words text-sm">{msg.message}</p>
+								<p className="text-sm">{msg.message}</p>
 							</div>
 						</div>
 					))}
