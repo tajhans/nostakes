@@ -49,6 +49,7 @@ export function Footer() {
 						width={20}
 						height={20}
 						alt="GitHub Repository"
+						className="dark:invert"
 					/>
 				</a>
 			</div>
