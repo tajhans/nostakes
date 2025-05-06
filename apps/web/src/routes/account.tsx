@@ -148,7 +148,7 @@ function RouteComponent() {
 	}
 
 	return (
-		<div className="container mx-auto max-w-3xl px-4 py-8">
+		<div className="container mx-auto max-w-3xl px-4 py-2">
 			<div className="space-y-6 rounded-lg border p-6">
 				<div className="flex items-center gap-6">
 					<div className="relative shrink-0">

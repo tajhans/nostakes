@@ -12,6 +12,7 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import "../index.css";
+import { Footer } from "@/components/footer";
 import { Header } from "@/components/header";
 import { VerificationNotice } from "@/components/verification-notice";
 
@@ -29,7 +30,7 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 			},
 			{
 				name: "description",
-				content: "Texas Hold'em no limit, with no stakes.",
+				content: "Texas Hold'em no limit poker with no stakes.",
 			},
 		],
 		links: [
@@ -49,10 +50,13 @@ function RootComponent() {
 		<>
 			<HeadContent />
 			<ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-				<div className="grid h-svh grid-rows-[auto_auto_auto_1fr]">
+				<div className="flex min-h-svh flex-col">
 					<VerificationNotice />
 					<Header />
-					{isFetching ? <Loader /> : <Outlet />}
+					<main className="flex-grow">
+						{isFetching ? <Loader /> : <Outlet />}
+					</main>
+					<Footer />
 				</div>
 				<Toaster richColors />
 			</ThemeProvider>
