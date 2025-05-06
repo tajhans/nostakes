@@ -204,12 +204,8 @@ export async function startNewHand(
 
 	const playerStates: Record<string, PlayerState> = {};
 	for (const member of participatingMembers) {
-		const prevPlayerState = previousGameState?.playerStates[member.userId];
-		const startingStack = prevPlayerState
-			? prevPlayerState.stack
-			: member.currentStack > 0
-				? member.currentStack
-				: roomConfig.bigBlind * 50;
+		const startingStack =
+			member.currentStack > 0 ? member.currentStack : roomConfig.bigBlind * 50;
 
 		playerStates[member.userId] = initializePlayerStateForHand(
 			member,

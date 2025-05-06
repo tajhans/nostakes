@@ -564,25 +564,58 @@ export function handleWebSocket(
 									`[WS OnMessage Action] Hand ended in room ${roomId}. Updating member stacks in Redis.`,
 								);
 								const finalPlayerStates = updatedGameState.playerStates;
-								const currentMembers = await getAllRoomMembers(roomId);
+								// Log the stacks directly from the GameState object
+								console.log(
+									`[WS EndHand] GameState Stacks: ${Object.values(
+										finalPlayerStates,
+									)
+										.map(
+											(p) =>
+												`${p.seatNumber}:${p.userId.substring(0, 4)}:${p.stack}`,
+										)
+										.join(", ")}`,
+								);
+
+								const currentMembers = await getAllRoomMembers(roomId); // Reads from Redis
+								console.log(
+									`[WS EndHand] currentMembers from Redis (before update): ${currentMembers.map((m) => `${m.seatNumber}:${m.userId.substring(0, 4)}:${m.currentStack}`).join(", ")}`,
+								);
 
 								const updatePromises = currentMembers.map(async (member) => {
 									const finalState = finalPlayerStates[member.userId];
 									if (finalState) {
+										// Construct the object explicitly, avoiding full spread of potentially stale 'member' stack
 										const updatedMemberInfo: RoomMemberInfo = {
-											...member,
-											currentStack: finalState.stack,
-											wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
+											userId: member.userId,
+											username: member.username, // Use username from Redis member data
+											seatNumber: member.seatNumber, // Use seat number from Redis member data
+											isActive: member.isActive, // Keep current active status from Redis member data
+											currentStack: finalState.stack, // <<< Use stack ONLY from the final GameState
+											wantsToPlayNextHand: member.wantsToPlayNextHand ?? false, // Keep current preference
 										};
+										console.log(
+											`[WS EndHand] Preparing to save to Redis for ${member.username} (Seat ${member.seatNumber}): Stack=${updatedMemberInfo.currentStack}`,
+										);
 										await setRoomMember(roomId, updatedMemberInfo);
+									} else {
+										console.log(
+											`[WS EndHand] No finalState found for member ${member.userId}. Skipping Redis update.`,
+										);
 									}
 								});
 
 								await Promise.all(updatePromises);
 								console.log(
-									`[WS OnMessage Action] Finished updating member stacks in Redis for room ${roomId}.`,
+									`[WS EndHand] Finished Redis updates for room ${roomId}.`,
 								);
-								await broadcastRoomState(roomId);
+
+								// Read back from Redis to confirm what was saved before broadcasting
+								const membersAfterUpdate = await getAllRoomMembers(roomId);
+								console.log(
+									`[WS EndHand] Members AFTER Redis update: ${membersAfterUpdate.map((m) => `${m.seatNumber}:${m.userId.substring(0, 4)}:${m.currentStack}`).join(", ")}`,
+								);
+
+								await broadcastRoomState(roomId); // Broadcasts the state AFTER update
 							} catch (endHandError) {
 								console.error(
 									`[WS OnMessage Action Error - End Hand] User ${userId}, Room ${roomId}: Failed to update stacks/broadcast room state`,
