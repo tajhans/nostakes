@@ -45,7 +45,7 @@ export function Footer() {
 					className="transition-opacity hover:opacity-80"
 				>
 					<img
-						src="/public/github.svg"
+						src="/github.svg"
 						width={20}
 						height={20}
 						alt="GitHub Repository"
