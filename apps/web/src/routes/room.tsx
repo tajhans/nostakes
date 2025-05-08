@@ -52,17 +52,7 @@ const CardComponent: React.FC<CardComponentProps> = ({
 	suit,
 	size = "md",
 }) => {
-	const [isLoaded, setIsLoaded] = useState(false);
-	const cardCode = `${rank}${suit}`;
-	const imageUrl = `https://image.nostakes.poker/cards/${cardCode}.svg`;
-
 	const sizeClasses = {
-		sm: "h-8 w-auto",
-		md: "h-12 w-auto",
-		lg: "h-28 w-auto",
-	};
-
-	const placeholderSizeClasses = {
 		sm: "h-8 w-[1.5rem] text-xs",
 		md: "h-12 w-[2.25rem] text-sm",
 		lg: "h-28 w-[5.25rem] text-lg",
@@ -71,49 +61,21 @@ const CardComponent: React.FC<CardComponentProps> = ({
 	const suitInfo = suitMap[suit];
 	const altText = `${rank} of ${suitInfo.char}`;
 
-	useEffect(() => {
-		setIsLoaded(false);
-	}, []);
-
 	return (
 		<div
 			className={cn(
-				"inline-flex select-none items-center justify-center",
+				"flex select-none items-center justify-center rounded border bg-card text-card-foreground",
 				sizeClasses[size],
 			)}
+			aria-label={altText}
 		>
-			{!isLoaded && (
-				<div
-					className={cn(
-						"flex items-center justify-center rounded border bg-card text-card-foreground",
-						placeholderSizeClasses[size],
-					)}
-					aria-label={altText}
-				>
-					<span
-						className={cn("font-semibold", suitInfo.colorClass)}
-						title={altText}
-					>
-						{rank}
-						{suitInfo.char}
-					</span>
-				</div>
-			)}
-			<img
-				src={imageUrl}
-				alt={altText}
-				className={cn(
-					"inline-block select-none",
-					sizeClasses[size],
-					isLoaded ? "opacity-100" : "absolute opacity-0",
-				)}
-				loading="eager"
-				draggable="false"
-				onLoad={() => setIsLoaded(true)}
-				onError={() => {
-					console.error(`Failed to load card image: ${imageUrl}`);
-				}}
-			/>
+			<span
+				className={cn("font-semibold", suitInfo.colorClass)}
+				title={altText}
+			>
+				{rank}
+				{suitInfo.char}
+			</span>
 		</div>
 	);
 };
