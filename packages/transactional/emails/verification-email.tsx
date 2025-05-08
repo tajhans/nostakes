@@ -94,9 +94,9 @@ const button = {
 	textDecoration: "none",
 	textAlign: "center" as const,
 	display: "block",
-	width: "100%",
-	padding: "12px",
-	margin: "24px 0",
+	width: "auto",
+	padding: "12px 24px",
+	margin: "24px 48px",
 };
 
 const link = {
