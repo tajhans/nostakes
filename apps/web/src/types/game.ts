@@ -58,3 +58,10 @@ export interface GameState {
 	lastUpdateTime: number;
 	roomConfig: { smallBlind: number; bigBlind: number; ante: number };
 }
+
+export interface HandEvaluationResult {
+	rankValue: number;
+	rankName: string;
+	bestHand: Card[];
+	kickers: number[];
+}

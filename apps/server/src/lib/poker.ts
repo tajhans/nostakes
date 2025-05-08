@@ -204,9 +204,7 @@ export async function startNewHand(
 
 	const playerStates: Record<string, PlayerState> = {};
 	for (const member of participatingMembers) {
-		const startingStack =
-			member.currentStack > 0 ? member.currentStack : roomConfig.bigBlind * 50;
-
+		const startingStack = member.currentStack;
 		playerStates[member.userId] = initializePlayerStateForHand(
 			member,
 			member.seatNumber,
@@ -232,18 +230,15 @@ export async function startNewHand(
 		handHistory.push(`Posting ${roomConfig.ante} ante.`);
 		for (const player of Object.values(playerStates)) {
 			if (!player.isSittingOut) {
-				const anteAmount = Math.min(player.stack, roomConfig.ante);
-				if (anteAmount > 0) {
-					player.stack -= anteAmount;
-					player.totalBet += anteAmount;
-					currentPot += anteAmount;
-					handHistory.push(
-						`Seat ${player.seatNumber} posts ante of ${anteAmount}${player.stack === 0 ? " (ALL-IN)" : ""}.`,
-					);
-					if (player.stack === 0) {
-						player.isAllIn = true;
-					}
+				player.stack -= roomConfig.ante;
+				player.totalBet += roomConfig.ante;
+				currentPot += roomConfig.ante;
+				let historyMsg = `Seat ${player.seatNumber} posts ante of ${roomConfig.ante}`;
+				if (player.stack === 0) {
+					player.isAllIn = true;
+					historyMsg += " (ALL-IN)";
 				}
+				handHistory.push(historyMsg);
 			}
 		}
 	}
@@ -318,17 +313,23 @@ export async function startNewHand(
 		})
 		.map((p) => p.userId);
 
-	for (let i = 0; i < 2; i++) {
-		for (const userId of participatingSeatsDealingOrder) {
-			const card = initialGameState.deck.pop();
-			if (card) {
-				initialGameState.playerStates[userId].hand.push(card);
-			} else {
-				throw new Error("Deck ran out of cards while dealing hole cards.");
+	if (participatingSeatsDealingOrder.length > 0) {
+		for (let i = 0; i < 2; i++) {
+			for (const userId of participatingSeatsDealingOrder) {
+				const card = initialGameState.deck.pop();
+				if (card) {
+					initialGameState.playerStates[userId].hand.push(card);
+				} else {
+					throw new Error("Deck ran out of cards while dealing hole cards.");
+				}
 			}
 		}
+		initialGameState.handHistory.push("Hole cards dealt to participants.");
+	} else {
+		initialGameState.handHistory.push(
+			"No players eligible to be dealt hole cards.",
+		);
 	}
-	initialGameState.handHistory.push("Hole cards dealt to participants.");
 
 	initialGameState.currentPlayerSeat =
 		getNextActivePlayerSeat(initialGameState, bigBlindSeat) ?? null;
@@ -366,9 +367,11 @@ export async function startNewHand(
 			`Seat ${initialGameState.currentPlayerSeat} is first to act.`,
 		);
 	} else {
-		initialGameState.handHistory.push(
-			"No player able to act preflop. Proceeding to deal board or showdown.",
-		);
+		if (participatingSeatsDealingOrder.length > 1) {
+			initialGameState.handHistory.push(
+				"No player able to act preflop. Proceeding to deal board or showdown.",
+			);
+		}
 	}
 
 	for (const p of Object.values(initialGameState.playerStates)) {

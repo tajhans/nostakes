@@ -739,6 +739,31 @@ export const appRouter = router({
 				});
 			}
 
+			if (wantsToPlay) {
+				const [targetRoomData] = await db
+					.select({ ante: room.ante })
+					.from(room)
+					.where(eq(room.id, roomId))
+					.limit(1);
+
+				if (!targetRoomData) {
+					throw new TRPCError({
+						code: "NOT_FOUND",
+						message: "Room details not found.",
+					});
+				}
+
+				if (
+					targetRoomData.ante > 0 &&
+					userMember.currentStack < targetRoomData.ante
+				) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: `Insufficient chips (${userMember.currentStack}) to post ante of ${targetRoomData.ante}. You need at least ${targetRoomData.ante}.`,
+					});
+				}
+			}
+
 			await updateWantsToPlayStatus(roomId, userId, wantsToPlay);
 			await broadcastRoomState(roomId);
 

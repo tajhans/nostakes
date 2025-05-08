@@ -14,8 +14,6 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
 	Tooltip,
 	TooltipContent,
@@ -24,6 +22,7 @@ import {
 } from "@/components/ui/tooltip";
 import { UpdateMaxPlayersDialog } from "@/components/update-max-players-dialog";
 import { authClient } from "@/lib/auth-client";
+import { evaluateHand } from "@/lib/poker";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/utils/trpc";
 import { trpcClient } from "@/utils/trpc";
@@ -32,7 +31,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { TRPCClientError } from "@trpc/client";
 import { applyPatch } from "fast-json-patch";
 import { Check, Circle, CircleDot, Copy, UserX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { suitMap } from "../components/hand-history";
 
@@ -42,6 +41,7 @@ import type {
 	ClientChatMessage,
 	ClientPokerAction,
 	GameState,
+	HandEvaluationResult,
 	RoomData,
 	RoomMemberInfo,
 	ServerWebSocketMessage,
@@ -273,6 +273,22 @@ function RouteComponent() {
 		!!gameState &&
 		gameState.phase !== "waiting" &&
 		gameState.phase !== "end_hand";
+
+	const loggedInUserPlayerState =
+		gameState?.playerStates[session?.user?.id ?? ""];
+	const loggedInUserHoleCards = loggedInUserPlayerState?.hand;
+	const communityCards = gameState?.communityCards;
+
+	const bestHandDisplayData = useMemo(() => {
+		if (
+			loggedInUserHoleCards &&
+			loggedInUserHoleCards.length === 2 &&
+			communityCards
+		) {
+			return evaluateHand(loggedInUserHoleCards, communityCards);
+		}
+		return null;
+	}, [loggedInUserHoleCards, communityCards]);
 
 	useEffect(() => {
 		if (reconnectTimeout.current) {
@@ -1165,18 +1181,33 @@ function RouteComponent() {
 																</span>
 															)}
 														{member.userId === session.user.id &&
-															playerState?.hand &&
-															playerState.hand.length > 0 &&
-															!playerState.isFolded && (
-																<div className="ml-1 flex items-center gap-1">
-																	{playerState.hand.map((c, index) => (
-																		<CardComponent
-																			key={`${c.rank}${c.suit}-${index}`}
-																			rank={c.rank}
-																			suit={c.suit}
-																			size="lg"
-																		/>
-																	))}
+															((playerState?.hand &&
+																playerState.hand.length > 0 &&
+																!playerState.isFolded) ||
+																(bestHandDisplayData &&
+																	bestHandDisplayData.bestHand.length ===
+																		5)) && (
+																<div className="ml-1 flex flex-col items-center">
+																	<div className="flex items-center gap-1">
+																		{playerState?.hand &&
+																			playerState.hand.length > 0 &&
+																			!playerState.isFolded &&
+																			playerState.hand.map((c, index) => (
+																				<CardComponent
+																					key={`${c.rank}${c.suit}-${index}`}
+																					rank={c.rank}
+																					suit={c.suit}
+																					size="lg"
+																				/>
+																			))}
+																	</div>
+																	{bestHandDisplayData &&
+																		bestHandDisplayData.bestHand.length ===
+																			5 && (
+																			<p className="mt-1 text-muted-foreground text-sm">
+																				{bestHandDisplayData.rankName}
+																			</p>
+																		)}
 																</div>
 															)}
 														{(playerState?.currentBet ?? 0) > 0 && (
