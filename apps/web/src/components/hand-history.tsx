@@ -1,6 +1,8 @@
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { GamePhase, Rank, Suit } from "@/types";
+import { ChevronLeft, ChevronRight, Expand, Minimize } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "../lib/utils";
 
@@ -78,6 +80,10 @@ const mapPhaseToStageName = (phase: GamePhase): string => {
 
 export function HandHistory({ history, currentPhase }: HandHistoryProps) {
 	const [activeTab, setActiveTab] = useState<string>("Preflop");
+	const [isExpanded, setIsExpanded] = useState(false);
+	const [currentMessageIndex, setCurrentMessageIndex] = useState<
+		Record<string, number>
+	>({});
 
 	const parsedHistory = useMemo((): ParsedStage[] => {
 		const stages: ParsedStage[] = [
@@ -128,8 +134,20 @@ export function HandHistory({ history, currentPhase }: HandHistoryProps) {
 		const targetStage = mapPhaseToStageName(currentPhase);
 		if (parsedHistory.some((stage) => stage.name === targetStage)) {
 			setActiveTab(targetStage);
+			const stage = parsedHistory.find((s) => s.name === targetStage);
+			if (stage) {
+				setCurrentMessageIndex((prev) => ({
+					...prev,
+					[targetStage]: stage.lines.length - 1,
+				}));
+			}
 		} else if (parsedHistory.length > 0) {
-			setActiveTab(parsedHistory[parsedHistory.length - 1].name);
+			const lastStage = parsedHistory[parsedHistory.length - 1];
+			setActiveTab(lastStage.name);
+			setCurrentMessageIndex((prev) => ({
+				...prev,
+				[lastStage.name]: lastStage.lines.length - 1,
+			}));
 		}
 	}, [currentPhase, parsedHistory]);
 
@@ -141,26 +159,95 @@ export function HandHistory({ history, currentPhase }: HandHistoryProps) {
 		);
 	}
 
+	const currentStage = parsedHistory.find((stage) => stage.name === activeTab);
+	const currentIndex = currentMessageIndex[activeTab] || 0;
+
+	const handlePrevMessage = () => {
+		if (currentStage && currentIndex > 0) {
+			setCurrentMessageIndex((prev) => ({
+				...prev,
+				[activeTab]: currentIndex - 1,
+			}));
+		}
+	};
+
+	const handleNextMessage = () => {
+		if (currentStage && currentIndex < currentStage.lines.length - 1) {
+			setCurrentMessageIndex((prev) => ({
+				...prev,
+				[activeTab]: currentIndex + 1,
+			}));
+		}
+	};
+
 	return (
-		<Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-			<TabsList className="grid w-full grid-cols-5">
+		<div className="w-full">
+			<div className="mb-2 flex justify-end">
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => setIsExpanded(!isExpanded)}
+					className="h-8 px-2"
+				>
+					{isExpanded ? (
+						<Minimize className="h-4 w-4" />
+					) : (
+						<Expand className="h-4 w-4" />
+					)}
+				</Button>
+			</div>
+			<Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+				<TabsList className="grid w-full grid-cols-5">
+					{parsedHistory.map((stage) => (
+						<TabsTrigger key={stage.name} value={stage.name}>
+							{stage.name}
+						</TabsTrigger>
+					))}
+				</TabsList>
 				{parsedHistory.map((stage) => (
-					<TabsTrigger key={stage.name} value={stage.name}>
-						{stage.name}
-					</TabsTrigger>
-				))}
-			</TabsList>
-			{parsedHistory.map((stage) => (
-				<TabsContent key={stage.name} value={stage.name}>
-					<ScrollArea className="h-96 w-full rounded-md border p-4">
-						{stage.lines.map((line, index) => (
-							<div key={index} className="mb-2">
-								{line}
+					<TabsContent key={stage.name} value={stage.name}>
+						{isExpanded ? (
+							<ScrollArea className="h-96 w-full rounded-md border p-4 text-center">
+								{stage.lines.map((line, index) => (
+									<div key={index} className="mb-2">
+										{line}
+									</div>
+								))}
+							</ScrollArea>
+						) : (
+							<div className="flex flex-col rounded-md border p-4">
+								<div className="min-h-[2rem] flex-1 text-center">
+									{currentStage?.lines[currentIndex]}
+								</div>
+								<div className="mt-2 flex items-center justify-between border-t pt-2">
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={handlePrevMessage}
+										disabled={currentIndex === 0}
+									>
+										<ChevronLeft className="h-4 w-4" />
+									</Button>
+									<span className="text-muted-foreground text-sm">
+										{currentIndex + 1} / {currentStage?.lines.length}
+									</span>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={handleNextMessage}
+										disabled={
+											currentStage &&
+											currentIndex === currentStage.lines.length - 1
+										}
+									>
+										<ChevronRight className="h-4 w-4" />
+									</Button>
+								</div>
 							</div>
-						))}
-					</ScrollArea>
-				</TabsContent>
-			))}
-		</Tabs>
+						)}
+					</TabsContent>
+				))}
+			</Tabs>
+		</div>
 	);
 }

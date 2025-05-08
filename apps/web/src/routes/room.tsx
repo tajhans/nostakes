@@ -30,7 +30,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { TRPCClientError } from "@trpc/client";
 import { applyPatch } from "fast-json-patch";
-import { Check, Circle, CircleDot, Copy, UserX } from "lucide-react";
+import { Check, Circle, CircleDot, Copy, Pencil, UserX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { suitMap } from "../components/hand-history";
@@ -41,7 +41,6 @@ import type {
 	ClientChatMessage,
 	ClientPokerAction,
 	GameState,
-	HandEvaluationResult,
 	RoomData,
 	RoomMemberInfo,
 	ServerWebSocketMessage,
@@ -55,7 +54,7 @@ const CardComponent: React.FC<CardComponentProps> = ({
 	const sizeClasses = {
 		sm: "h-8 w-[1.5rem] text-xs",
 		md: "h-12 w-[2.25rem] text-sm",
-		lg: "h-28 w-[5.25rem] text-lg",
+		lg: "h-28  w-[5.25rem] text-lg",
 	};
 
 	const suitInfo = suitMap[suit];
@@ -122,37 +121,24 @@ function RouteComponent() {
 		retry: (failureCount, error: unknown) => {
 			if (error instanceof TRPCClientError) {
 				const code = error.data?.code;
-
 				if (code === "NOT_FOUND" || code === "UNAUTHORIZED") {
-					console.log(`Not retrying query due to error code: ${code}`);
 					return false;
 				}
 			}
-
-			console.log(
-				`Retrying query (attempt ${failureCount + 1}) after error:`,
-				error,
-			);
 			return failureCount < 3;
 		},
 	});
 
 	const startGame = useMutation({
-		mutationFn: async (rId: string) => {
-			return trpcClient.startGame.mutate({ roomId: rId });
-		},
-		onSuccess: () => {
-			toast.success("Game started!");
-		},
-		onError: (error) => {
-			toast.error(`Failed to start game: ${error.message}`);
-		},
+		mutationFn: async (rId: string) =>
+			trpcClient.startGame.mutate({ roomId: rId }),
+		onSuccess: () => toast.success("Game started!"),
+		onError: (error) => toast.error(`Failed to start game: ${error.message}`),
 	});
 
 	const closeRoom = useMutation({
-		mutationFn: async (rId: string) => {
-			return trpcClient.closeRoom.mutate({ roomId: rId });
-		},
+		mutationFn: async (rId: string) =>
+			trpcClient.closeRoom.mutate({ roomId: rId }),
 		onSuccess: () => {
 			toast.success("Room closed successfully");
 			setIsCloseRoomDialogOpen(false);
@@ -164,9 +150,8 @@ function RouteComponent() {
 	});
 
 	const leaveRoom = useMutation({
-		mutationFn: async (rId: string) => {
-			return trpcClient.leaveRoom.mutate({ roomId: rId });
-		},
+		mutationFn: async (rId: string) =>
+			trpcClient.leaveRoom.mutate({ roomId: rId }),
 		onSuccess: () => {
 			toast.success("You have left the room.");
 			setIsLeaveRoomDialogOpen(false);
@@ -179,9 +164,8 @@ function RouteComponent() {
 	});
 
 	const togglePlay = useMutation({
-		mutationFn: async (variables: { roomId: string; wantsToPlay: boolean }) => {
-			return trpcClient.togglePlayStatus.mutate(variables);
-		},
+		mutationFn: async (variables: { roomId: string; wantsToPlay: boolean }) =>
+			trpcClient.togglePlayStatus.mutate(variables),
 		onSuccess: (_, variables) => {
 			const actionText = variables.wantsToPlay ? "IN" : "OUT";
 			const typeText = (initialRoomData?.ante ?? 0) > 0 ? "ante" : "hand";
@@ -194,16 +178,14 @@ function RouteComponent() {
 				),
 			);
 		},
-		onError: (error) => {
-			toast.error(`Failed to update status: ${error.message}`);
-		},
+		onError: (error) =>
+			toast.error(`Failed to update status: ${error.message}`),
 	});
 
 	const kickUser = useMutation({
-		mutationFn: async (variables: { roomId: string; userIdToKick: string }) => {
-			return trpcClient.kickUser.mutate(variables);
-		},
-		onSuccess: (data, variables) => {
+		mutationFn: async (variables: { roomId: string; userIdToKick: string }) =>
+			trpcClient.kickUser.mutate(variables),
+		onSuccess: (_, variables) => {
 			toast.success(
 				`Successfully kicked user ${members.find((m) => m.userId === variables.userIdToKick)?.username || "User"}.`,
 			);
@@ -219,23 +201,19 @@ function RouteComponent() {
 		mutationFn: async (variables: {
 			roomId: string;
 			filterProfanity: boolean;
-		}) => {
-			return trpcClient.updateRoomFilter.mutate(variables);
-		},
+		}) => trpcClient.updateRoomFilter.mutate(variables),
 		onSuccess: (data) => {
 			toast.success(data.message);
 			queryClient.invalidateQueries({ queryKey: trpc.getRooms.queryKey() });
 		},
-		onError: (error) => {
-			toast.error(`Failed to update filter: ${error.message}`);
-		},
+		onError: (error) =>
+			toast.error(`Failed to update filter: ${error.message}`),
 	});
 
 	const isHandInProgress =
 		!!gameState &&
 		gameState.phase !== "waiting" &&
 		gameState.phase !== "end_hand";
-
 	const loggedInUserPlayerState =
 		gameState?.playerStates[session?.user?.id ?? ""];
 	const loggedInUserHoleCards = loggedInUserPlayerState?.hand;
@@ -257,25 +235,14 @@ function RouteComponent() {
 			clearTimeout(reconnectTimeout.current);
 			reconnectTimeout.current = null;
 		}
-
-		if (isSessionPending) {
-			console.log("WebSocket Effect: Waiting for session...");
-			return;
-		}
+		if (isSessionPending) return;
 		if (!session?.user?.id || !session?.user?.username) {
-			console.log("WebSocket Effect: Session data missing (id or username).");
 			navigate({ to: "/login" });
 			return;
 		}
-		if (!roomId) {
-			console.log("WebSocket Effect: roomId is missing.");
-			return;
-		}
+		if (!roomId) return;
 
 		if (wsRef.current) {
-			console.log(
-				"WebSocket Effect: Closing previous connection before creating new one.",
-			);
 			wsRef.current.close(1000, "Reconnecting or dependencies changed");
 			wsRef.current = null;
 			setIsConnected(false);
@@ -283,29 +250,24 @@ function RouteComponent() {
 
 		const serverUrlString = import.meta.env.VITE_SERVER_URL;
 		if (!serverUrlString) {
-			console.error("VITE_SERVER_URL is not defined.");
 			toast.error("Configuration error. Cannot connect.");
 			return;
 		}
-
 		let wsUrl: string;
 		try {
 			const serverUrl = new URL(serverUrlString);
 			const wsProtocol = serverUrl.protocol === "https:" ? "wss" : "ws";
 			wsUrl = `${wsProtocol}://${serverUrl.host}/ws?roomId=${roomId}&userId=${session.user.id}&username=${encodeURIComponent(session.user.username)}`;
 		} catch (e) {
-			console.error("Invalid VITE_SERVER_URL:", serverUrlString, e);
 			toast.error("Invalid server configuration.");
 			return;
 		}
 
-		console.log("WebSocket Effect: Attempting to connect to", wsUrl);
 		const ws = new WebSocket(wsUrl);
 		wsRef.current = ws;
 
-		const handleOpen = () => {
+		ws.onopen = () => {
 			if (wsRef.current === ws) {
-				console.log("WebSocket connected");
 				setIsConnected(true);
 				reconnectAttempt.current = 0;
 				if (!hasShownInitialConnectToast.current) {
@@ -313,20 +275,13 @@ function RouteComponent() {
 					hasShownInitialConnectToast.current = true;
 				}
 			} else {
-				console.log(
-					"WebSocket opened, but it's not the current ref. Closing it.",
-				);
 				ws.close(1000, "Stale connection opened");
 			}
 		};
-
-		const handleMessage = (event: MessageEvent) => {
+		ws.onmessage = (event: MessageEvent) => {
 			if (wsRef.current !== ws) return;
-
 			try {
 				const data: ServerWebSocketMessage = JSON.parse(event.data);
-				console.debug("WS Message Received:", data.type);
-
 				switch (data.type) {
 					case "chat":
 						setChatMessages((prev) =>
@@ -339,7 +294,6 @@ function RouteComponent() {
 						);
 						break;
 					case "room_state": {
-						console.log("Room State Update Received", data.members);
 						const processedMembers = data.members.map((member) => ({
 							...member,
 							wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
@@ -350,30 +304,21 @@ function RouteComponent() {
 					}
 					case "room_closed":
 						toast.info("The room has been closed by the owner.");
-						if (wsRef.current === ws) {
+						if (wsRef.current === ws)
 							wsRef.current.close(1000, "Room closed by owner");
-						}
 						navigate({ to: "/" });
 						break;
 					case "game_state":
-						console.log("Full Game State Update Received");
 						setGameState(data.gameState);
 						if (
-							data.gameState.phase !== gameState?.phase ||
 							data.gameState.currentPlayerSeat !== gameState?.currentPlayerSeat
 						) {
 							setBetAmount(0);
 						}
 						break;
 					case "game_state_patch":
-						console.debug(
-							`Game State Patch Received (${data.patches.length} ops)`,
-						);
 						setGameState((currentState) => {
-							if (!currentState) {
-								console.warn("Received patches but current state is null.");
-								return null;
-							}
+							if (!currentState) return null;
 							try {
 								const { newDocument } = applyPatch(
 									currentState,
@@ -381,18 +326,16 @@ function RouteComponent() {
 									true,
 									false,
 								);
-								const phaseChanged = data.patches.some(
-									(p) => p.path === "/phase",
-								);
-								const turnChanged = data.patches.some(
-									(p) => p.path === "/currentPlayerSeat",
-								);
-								if (phaseChanged || turnChanged) {
+								if (
+									data.patches.some(
+										(p) =>
+											p.path === "/phase" || p.path === "/currentPlayerSeat",
+									)
+								) {
 									setBetAmount(0);
 								}
 								return newDocument as GameState;
 							} catch (error) {
-								console.error("Failed to apply game state patches:", error);
 								toast.error(
 									"Game state update error. State may be out of sync.",
 								);
@@ -401,11 +344,9 @@ function RouteComponent() {
 						});
 						break;
 					case "user_kicked":
-						console.log("Received user_kicked message:", data.reason);
 						toast.warning(`You have been kicked: ${data.reason}`);
-						if (wsRef.current === ws) {
+						if (wsRef.current === ws)
 							wsRef.current.close(1000, "Kicked by owner");
-						}
 						navigate({ to: "/" });
 						break;
 					case "error":
@@ -415,17 +356,13 @@ function RouteComponent() {
 						console.warn("Received unknown WebSocket message type:", data);
 				}
 			} catch (error) {
-				console.error("Failed to parse WebSocket message:", error, event.data);
 				toast.error("Received invalid data from server.");
 			}
 		};
-
-		const handleClose = (event: CloseEvent) => {
-			console.log("WebSocket disconnected", event.code, event.reason);
+		ws.onclose = (event: CloseEvent) => {
 			if (wsRef.current === ws) {
 				setIsConnected(false);
 				wsRef.current = null;
-
 				const normalClosureCodes = [1000, 1001, 1005];
 				const expectedReasons = [
 					"Room closed by owner",
@@ -437,7 +374,6 @@ function RouteComponent() {
 					"Stale connection opened",
 					"Kicked by owner",
 				];
-
 				if (
 					!normalClosureCodes.includes(event.code) &&
 					!expectedReasons.includes(event.reason)
@@ -446,57 +382,26 @@ function RouteComponent() {
 						`Connection lost (Code: ${event.code}). Attempting to reconnect...`,
 					);
 					hasShownInitialConnectToast.current = false;
-
 					const delay = Math.min(30000, 2 ** reconnectAttempt.current * 1000);
 					reconnectAttempt.current += 1;
-					console.log(
-						`Attempting reconnect #${reconnectAttempt.current} in ${delay / 1000}s`,
-					);
-
 					if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
-					reconnectTimeout.current = setTimeout(() => {
-						console.log(
-							"Reconnect timer elapsed. Manual refresh may be needed or effect should re-run.",
-						);
-					}, delay);
+					reconnectTimeout.current = setTimeout(() => {}, delay);
 				} else if (event.reason && !expectedReasons.includes(event.reason)) {
 					toast.info(`Disconnected: ${event.reason}`);
 				} else if (!normalClosureCodes.includes(event.code)) {
 					toast.info(`Disconnected (Code: ${event.code})`);
 				}
-			} else {
-				console.log(
-					"WebSocket closed, but ref points to a different instance or null.",
-				);
 			}
 		};
-
-		const handleError = (error: Event) => {
-			console.error("WebSocket error:", error);
-			if (wsRef.current === ws) {
-				toast.error("WebSocket connection error.");
-			}
+		ws.onerror = (error: Event) => {
+			if (wsRef.current === ws) toast.error("WebSocket connection error.");
 		};
-
-		ws.onopen = handleOpen;
-		ws.onmessage = handleMessage;
-		ws.onclose = handleClose;
-		ws.onerror = handleError;
-
 		return () => {
-			console.log("WebSocket Effect: Cleanup running.");
-			if (reconnectTimeout.current) {
-				clearTimeout(reconnectTimeout.current);
-				reconnectTimeout.current = null;
-			}
+			if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
 			if (wsRef.current === ws && ws.readyState < WebSocket.CLOSING) {
-				console.log("WebSocket Effect: Closing connection via cleanup.");
 				ws.close(1000, "Client navigating away");
 			}
-			if (wsRef.current === ws) {
-				wsRef.current = null;
-				setIsConnected(false);
-			}
+			if (wsRef.current === ws) wsRef.current = null;
 		};
 	}, [
 		roomId,
@@ -504,13 +409,10 @@ function RouteComponent() {
 		session?.user?.username,
 		isSessionPending,
 		navigate,
-		gameState?.currentPlayerSeat,
-		gameState?.phase,
 	]);
 
 	useEffect(() => {
 		if (initialRoomData?.members && members.length === 0) {
-			console.log("Setting initial members from query data.");
 			const processedInitialMembers = initialRoomData.members.map((member) => ({
 				...member,
 				wantsToPlayNextHand: member.wantsToPlayNextHand ?? false,
@@ -522,20 +424,15 @@ function RouteComponent() {
 
 	const sendMessage = (message: ClientChatMessage | ClientPokerAction) => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			console.debug("Sending WS Message:", message.type, message);
 			wsRef.current.send(JSON.stringify(message));
 		} else {
-			console.warn("Attempted to send message, but WebSocket is not open.");
 			toast.error("Cannot send message. Connection not active.");
 		}
 	};
-
 	const sendChatMessage = (messageText: string) => {
-		if (messageText.trim()) {
+		if (messageText.trim())
 			sendMessage({ type: "chat", message: messageText.trim() });
-		}
 	};
-
 	const handleCopyCode = async () => {
 		if (!initialRoomData?.joinCode) return;
 		const codeToCopy = initialRoomData.joinCode;
@@ -603,15 +500,14 @@ function RouteComponent() {
 		if (gameState && initialRoomData) {
 			const playerState = gameState.playerStates[session?.user?.id ?? ""];
 			if (!playerState) return;
-			const currentBet = gameState.currentBet;
-			const minRaiseAmount = gameState.minRaiseAmount;
-			const playerCurrentBet = playerState.currentBet;
+			const currentBetVal = gameState.currentBet;
+			const minRaiseAmountVal = gameState.minRaiseAmount;
+			const playerCurrentBetVal = playerState.currentBet;
 			const minRaiseToValue = Math.min(
-				currentBet + minRaiseAmount,
-				playerState.stack + playerCurrentBet,
+				currentBetVal + minRaiseAmountVal,
+				playerState.stack + playerCurrentBetVal,
 			);
-			const maxRaiseValue = playerState.stack + playerCurrentBet;
-
+			const maxRaiseValue = playerState.stack + playerCurrentBetVal;
 			if (amount >= minRaiseToValue && amount <= maxRaiseValue) {
 				sendMessage({ type: "action", action: "raise", amount: amount });
 			} else {
@@ -624,13 +520,8 @@ function RouteComponent() {
 		}
 	};
 
-	if (isSessionPending) {
-		console.log("Render: Session pending...");
-		return <RoomSkeleton />;
-	}
-
+	if (isSessionPending) return <RoomSkeleton />;
 	if (!session?.user) {
-		console.log("Render: No user session found after loading.");
 		return (
 			<div className="container p-4 text-center">
 				Please log in to view rooms.
@@ -640,33 +531,26 @@ function RouteComponent() {
 			</div>
 		);
 	}
-
-	if (roomId && isRoomLoading) {
-		console.log("Render: Room data loading...");
-		return <RoomSkeleton />;
-	}
-
+	if (roomId && isRoomLoading) return <RoomSkeleton />;
 	if (roomId && isRoomError) {
-		console.error("Render: Error loading room data:", roomError);
 		const isNotFoundError =
 			roomError instanceof TRPCClientError &&
 			roomError.data?.code === "NOT_FOUND";
-		const errorMsg = isNotFoundError
-			? "The room was not found."
-			: "Failed to load room data.";
 		return (
 			<div className="container mx-auto px-4 py-8 text-center">
 				<h1 className="mb-4 font-bold text-destructive text-xl">Error</h1>
-				<p className="text-muted-foreground">{errorMsg}</p>
+				<p className="text-muted-foreground">
+					{isNotFoundError
+						? "The room was not found."
+						: "Failed to load room data."}
+				</p>
 				<Button onClick={() => navigate({ to: "/" })} className="mt-4">
 					Go to Home
 				</Button>
 			</div>
 		);
 	}
-
 	if (roomId && !isRoomLoading && !initialRoomData) {
-		console.log("Render: Room not found after loading.");
 		return (
 			<div className="container mx-auto px-4 py-8 text-center">
 				<h1 className="mb-4 font-bold text-xl">Room Not Found</h1>
@@ -679,9 +563,7 @@ function RouteComponent() {
 			</div>
 		);
 	}
-
-	if (!initialRoomData) {
-		console.error("Render: initialRoomData is unexpectedly null/undefined.");
+	if (!initialRoomData)
 		return (
 			<div className="container mx-auto px-4 py-8 text-center">
 				<h1 className="mb-4 font-bold text-destructive text-xl">
@@ -692,19 +574,15 @@ function RouteComponent() {
 				</Button>
 			</div>
 		);
-	}
 
 	const room = initialRoomData;
 	const activeMembers = members.filter((m) => m.isActive);
 	const isAdmin = session.user.id === room.ownerId;
-
 	const readyPlayerCount = activeMembers.filter(
 		(m) => m.wantsToPlayNextHand === true,
 	).length;
-
 	const canUpdateMaxPlayers =
 		isAdmin && room.isActive && room.maxPlayers < 8 && isConnected;
-
 	const canStartGame =
 		isAdmin &&
 		room.isActive &&
@@ -713,7 +591,6 @@ function RouteComponent() {
 			gameState.phase === "waiting" ||
 			gameState.phase === "end_hand") &&
 		readyPlayerCount >= 2;
-
 	const startGameButtonTitle = !isAdmin
 		? "Only the admin can start the game"
 		: !room.isActive
@@ -727,7 +604,6 @@ function RouteComponent() {
 					: readyPlayerCount < 2
 						? `Need at least 2 players ready (${readyPlayerCount} ready)`
 						: "Start the next hand";
-
 	const currentPlayerState = gameState?.playerStates[session.user.id];
 	const isMyTurn =
 		!!currentPlayerState &&
@@ -735,18 +611,15 @@ function RouteComponent() {
 		!currentPlayerState?.isFolded &&
 		!currentPlayerState?.isAllIn &&
 		!currentPlayerState?.isSittingOut;
-
 	const currentUserMemberInfo = members.find(
 		(m) => m.userId === session.user.id,
 	);
-
 	const showPlayButton =
 		room.isActive &&
 		currentUserMemberInfo?.isActive &&
 		(!gameState ||
 			gameState.phase === "waiting" ||
 			gameState.phase === "end_hand");
-
 	const wantsToPlay = currentUserMemberInfo?.wantsToPlayNextHand === true;
 	const playButtonText =
 		room.ante > 0
@@ -756,18 +629,15 @@ function RouteComponent() {
 			: wantsToPlay
 				? "Leave Next Hand"
 				: "Enter Next Hand";
-
 	const currentBet = gameState?.currentBet ?? 0;
 	const minRaiseAmount = gameState?.minRaiseAmount ?? room.bigBlind;
 	const playerCurrentBet = currentPlayerState?.currentBet ?? 0;
 	const playerStack = currentPlayerState?.stack ?? 0;
-
 	const canCheck = isMyTurn && currentBet === playerCurrentBet;
 	const canCall = isMyTurn && currentBet > playerCurrentBet && playerStack > 0;
 	const canBet = isMyTurn && currentBet === 0 && playerStack > 0;
 	const canRaise =
 		isMyTurn && currentBet > 0 && playerStack > currentBet - playerCurrentBet;
-
 	const callAmount = Math.min(currentBet - playerCurrentBet, playerStack);
 	const minBetValue = Math.max(1, Math.min(room.bigBlind, playerStack));
 	const minRaiseToValue = Math.min(
@@ -775,15 +645,12 @@ function RouteComponent() {
 		playerStack + playerCurrentBet,
 	);
 	const maxBetOrRaiseValue = playerStack + playerCurrentBet;
-
 	const handInProgressReason =
 		"Cannot perform this action while a hand is in progress.";
-
 	const closeRoomDisabled =
 		closeRoom.isPending || !isConnected || isHandInProgress;
 	const leaveRoomDisabled =
 		leaveRoom.isPending || !isConnected || isHandInProgress;
-
 	const transferChipsDisabled =
 		!isConnected || isHandInProgress || !currentUserMemberInfo?.isActive;
 	const transferChipsDisabledReason = !isConnected
@@ -797,57 +664,201 @@ function RouteComponent() {
 	return (
 		<TooltipProvider>
 			<div className="container mx-auto max-w-5xl px-4 py-2">
-				<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
-					<div className="space-y-4">
-						<div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-							<div className="flex items-center gap-2">
-								<span className="font-medium text-sm">Join Code:</span>
-								<div className="flex items-center rounded-md border bg-secondary px-2 py-1">
-									<span className="font-mono text-sm tracking-wider">
-										{room.joinCode
-											? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
-											: "N/A"}
-									</span>
+				<div className="mb-4 flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+					<div className="flex items-center gap-2">
+						<span className="font-medium text-sm">Code:</span>
+						<div className="flex items-center rounded-md border bg-secondary px-2 py-1">
+							<span className="font-mono text-sm tracking-wider">
+								{room.joinCode
+									? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
+									: "N/A"}
+							</span>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										variant="ghost"
+										size="icon"
+										className="ml-1 h-6 w-6"
+										onClick={handleCopyCode}
+										disabled={!room.joinCode || isCopied}
+									>
+										{isCopied ? (
+											<Check className="h-4 w-4 text-green-500" />
+										) : (
+											<Copy className="h-4 w-4" />
+										)}
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>
+									<p>Copy Join Code</p>
+								</TooltipContent>
+							</Tooltip>
+						</div>
+						<Tooltip>
+							<TooltipTrigger>
+								{isConnected ? (
+									<CircleDot className="h-4 w-4 text-green-600" />
+								) : (
+									<Circle className="h-4 w-4 animate-pulse text-red-600" />
+								)}
+							</TooltipTrigger>
+							<TooltipContent>
+								<p>{isConnected ? "Connected" : "Disconnected"}</p>
+							</TooltipContent>
+						</Tooltip>
+					</div>
+
+					<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground text-sm">
+						<div className="flex items-center gap-1">
+							<span>
+								Players: {activeMembers.length}/{room.maxPlayers}
+							</span>
+							{canUpdateMaxPlayers && (
+								<UpdateMaxPlayersDialog
+									roomId={roomId}
+									currentMaxPlayers={room.maxPlayers}
+									currentActivePlayers={activeMembers.length}
+								>
 									<Tooltip>
 										<TooltipTrigger asChild>
-											<Button
-												variant="ghost"
-												size="icon"
-												className="ml-1 h-6 w-6"
-												onClick={handleCopyCode}
-												disabled={!room.joinCode || isCopied}
-											>
-												{isCopied ? (
-													<Check className="h-4 w-4 text-green-500" />
-												) : (
-													<Copy className="h-4 w-4" />
-												)}
+											<Button variant="ghost" size="icon" className="p-0">
+												<Pencil className="h-3 w-3" />
 											</Button>
 										</TooltipTrigger>
-										<TooltipContent>
-											<p>Copy Join Code</p>
-										</TooltipContent>
+										<TooltipContent>Change Room Size</TooltipContent>
 									</Tooltip>
-								</div>
-								<Tooltip>
-									<TooltipTrigger>
-										{isConnected ? (
-											<CircleDot className="h-4 w-4 text-green-600" />
-										) : (
-											<Circle className="h-4 w-4 animate-pulse text-red-600" />
-										)}
-									</TooltipTrigger>
-									<TooltipContent>
-										<p>
-											{isConnected
-												? "Connected to room server"
-												: "Disconnected from room server"}
-										</p>
-									</TooltipContent>
-								</Tooltip>
-							</div>
+								</UpdateMaxPlayersDialog>
+							)}
+						</div>
+						<span>Stack: {room.startingStack}</span>
+						<span>Small Blind: {room.smallBlind}</span>
+						<span>Big Blind: {room.bigBlind}</span>
+						<span>Ante: {room.ante}</span>
+					</div>
 
-							<div className="flex flex-wrap items-center justify-end gap-2">
+					<div className="flex flex-wrap items-center justify-end gap-2">
+						{isAdmin && room.isActive && (
+							<Dialog
+								open={isCloseRoomDialogOpen}
+								onOpenChange={setIsCloseRoomDialogOpen}
+							>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<span
+											tabIndex={closeRoomDisabled ? 0 : -1}
+											className={closeRoomDisabled ? "cursor-not-allowed" : ""}
+										>
+											<DialogTrigger asChild>
+												<Button
+													variant="destructive"
+													size="sm"
+													disabled={closeRoomDisabled}
+													aria-disabled={closeRoomDisabled}
+													className={
+														closeRoomDisabled
+															? "pointer-events-none opacity-50"
+															: ""
+													}
+												>
+													{closeRoom.isPending ? "Closing..." : "Close Room"}
+												</Button>
+											</DialogTrigger>
+										</span>
+									</TooltipTrigger>
+									{isHandInProgress && (
+										<TooltipContent>
+											<p>{handInProgressReason}</p>
+										</TooltipContent>
+									)}
+								</Tooltip>
+								<DialogContent>
+									<DialogHeader>
+										<DialogTitle>Close Room?</DialogTitle>
+										<DialogDescription>
+											Are you sure you want to close this room? All players will
+											be removed and the game will end.
+										</DialogDescription>
+									</DialogHeader>
+									<DialogFooter>
+										<DialogClose asChild>
+											<Button variant="outline">Cancel</Button>
+										</DialogClose>
+										<Button
+											variant="destructive"
+											onClick={() => closeRoom.mutate(roomId)}
+											disabled={closeRoom.isPending}
+										>
+											{closeRoom.isPending ? "Closing..." : "Close Room"}
+										</Button>
+									</DialogFooter>
+								</DialogContent>
+							</Dialog>
+						)}
+						{!isAdmin && currentUserMemberInfo?.isActive && (
+							<Dialog
+								open={isLeaveRoomDialogOpen}
+								onOpenChange={setIsLeaveRoomDialogOpen}
+							>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<span
+											tabIndex={leaveRoomDisabled ? 0 : -1}
+											className={leaveRoomDisabled ? "cursor-not-allowed" : ""}
+										>
+											<DialogTrigger asChild>
+												<Button
+													variant="outline"
+													size="sm"
+													disabled={leaveRoomDisabled}
+													aria-disabled={leaveRoomDisabled}
+													className={
+														leaveRoomDisabled
+															? "pointer-events-none opacity-50"
+															: ""
+													}
+												>
+													{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
+												</Button>
+											</DialogTrigger>
+										</span>
+									</TooltipTrigger>
+									{isHandInProgress && (
+										<TooltipContent>
+											<p>{handInProgressReason}</p>
+										</TooltipContent>
+									)}
+								</Tooltip>
+								<DialogContent>
+									<DialogHeader>
+										<DialogTitle>Leave Room?</DialogTitle>
+										<DialogDescription>
+											Are you sure you want to leave this room? You can rejoin
+											later.
+										</DialogDescription>
+									</DialogHeader>
+									<DialogFooter>
+										<DialogClose asChild>
+											<Button variant="outline">Cancel</Button>
+										</DialogClose>
+										<Button
+											variant="destructive"
+											onClick={() => leaveRoom.mutate(roomId)}
+											disabled={leaveRoom.isPending}
+										>
+											{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
+										</Button>
+									</DialogFooter>
+								</DialogContent>
+							</Dialog>
+						)}
+					</div>
+				</div>
+
+				<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
+					<div className="space-y-4">
+						<div className="rounded-lg border p-4">
+							<div className="mb-2 flex items-center justify-between">
+								<h2 className="font-medium">Players</h2>
 								{currentUserMemberInfo?.isActive && (
 									<TransferChipsDialog
 										roomId={roomId}
@@ -858,201 +869,7 @@ function RouteComponent() {
 										disabledReason={transferChipsDisabledReason}
 									/>
 								)}
-								{showPlayButton && (
-									<Button
-										variant={wantsToPlay ? "secondary" : "outline"}
-										size="sm"
-										onClick={() =>
-											togglePlay.mutate({ roomId, wantsToPlay: !wantsToPlay })
-										}
-										disabled={togglePlay.isPending || !isConnected}
-									>
-										{togglePlay.isPending ? "..." : playButtonText}
-									</Button>
-								)}
-								{canUpdateMaxPlayers && (
-									<UpdateMaxPlayersDialog
-										roomId={roomId}
-										currentMaxPlayers={room.maxPlayers}
-										currentActivePlayers={activeMembers.length}
-									/>
-								)}
-								{isAdmin && room.isActive && (
-									<Dialog
-										open={isCloseRoomDialogOpen}
-										onOpenChange={setIsCloseRoomDialogOpen}
-									>
-										<Tooltip>
-											<TooltipTrigger asChild>
-												<span
-													tabIndex={closeRoomDisabled ? 0 : -1}
-													className={
-														closeRoomDisabled ? "cursor-not-allowed" : ""
-													}
-												>
-													<DialogTrigger asChild>
-														<Button
-															variant="destructive"
-															size="sm"
-															disabled={closeRoomDisabled}
-															aria-disabled={closeRoomDisabled}
-															className={
-																closeRoomDisabled
-																	? "pointer-events-none opacity-50"
-																	: ""
-															}
-														>
-															{closeRoom.isPending
-																? "Closing..."
-																: "Close Room"}
-														</Button>
-													</DialogTrigger>
-												</span>
-											</TooltipTrigger>
-											{isHandInProgress && (
-												<TooltipContent>
-													<p>{handInProgressReason}</p>
-												</TooltipContent>
-											)}
-										</Tooltip>
-										<DialogContent>
-											<DialogHeader>
-												<DialogTitle>Close Room?</DialogTitle>
-												<DialogDescription>
-													Are you sure you want to close this room? All players
-													will be removed and the game will end.
-												</DialogDescription>
-											</DialogHeader>
-											<DialogFooter>
-												<DialogClose asChild>
-													<Button variant="outline">Cancel</Button>
-												</DialogClose>
-												<Button
-													variant="destructive"
-													onClick={() => closeRoom.mutate(roomId)}
-													disabled={closeRoom.isPending}
-												>
-													{closeRoom.isPending ? "Closing..." : "Close Room"}
-												</Button>
-											</DialogFooter>
-										</DialogContent>
-									</Dialog>
-								)}
-								{isAdmin && room.isActive && (
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<span
-												tabIndex={canStartGame ? -1 : 0}
-												className={!canStartGame ? "cursor-not-allowed" : ""}
-											>
-												<Button
-													variant="default"
-													size="sm"
-													onClick={() => {
-														if (canStartGame) {
-															startGame.mutate(roomId);
-														}
-													}}
-													disabled={!canStartGame || startGame.isPending}
-													aria-disabled={!canStartGame || startGame.isPending}
-													className={
-														!canStartGame
-															? "pointer-events-none opacity-50"
-															: ""
-													}
-												>
-													{startGame.isPending ? "Starting..." : "Start Game"}
-												</Button>
-											</span>
-										</TooltipTrigger>
-										{!canStartGame && !startGame.isPending && (
-											<TooltipContent>
-												<p>{startGameButtonTitle}</p>
-											</TooltipContent>
-										)}
-									</Tooltip>
-								)}
-								{!isAdmin && currentUserMemberInfo?.isActive && (
-									<Dialog
-										open={isLeaveRoomDialogOpen}
-										onOpenChange={setIsLeaveRoomDialogOpen}
-									>
-										<Tooltip>
-											<TooltipTrigger asChild>
-												<span
-													tabIndex={leaveRoomDisabled ? 0 : -1}
-													className={
-														leaveRoomDisabled ? "cursor-not-allowed" : ""
-													}
-												>
-													<DialogTrigger asChild>
-														<Button
-															variant="outline"
-															size="sm"
-															disabled={leaveRoomDisabled}
-															aria-disabled={leaveRoomDisabled}
-															className={
-																leaveRoomDisabled
-																	? "pointer-events-none opacity-50"
-																	: ""
-															}
-														>
-															{leaveRoom.isPending
-																? "Leaving..."
-																: "Leave Room"}
-														</Button>
-													</DialogTrigger>
-												</span>
-											</TooltipTrigger>
-											{isHandInProgress && (
-												<TooltipContent>
-													<p>{handInProgressReason}</p>
-												</TooltipContent>
-											)}
-										</Tooltip>
-										<DialogContent>
-											<DialogHeader>
-												<DialogTitle>Leave Room?</DialogTitle>
-												<DialogDescription>
-													Are you sure you want to leave this room? You can
-													rejoin later using the join code if the room is still
-													open.
-												</DialogDescription>
-											</DialogHeader>
-											<DialogFooter>
-												<DialogClose asChild>
-													<Button variant="outline">Cancel</Button>
-												</DialogClose>
-												<Button
-													variant="destructive"
-													onClick={() => leaveRoom.mutate(roomId)}
-													disabled={leaveRoom.isPending}
-												>
-													{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
-												</Button>
-											</DialogFooter>
-										</DialogContent>
-									</Dialog>
-								)}
 							</div>
-						</div>
-
-						<div className="rounded-lg border p-4">
-							<h2 className="mb-2 font-medium">Room Info</h2>
-							<div className="grid grid-cols-1 gap-x-4 gap-y-1 text-muted-foreground text-sm sm:grid-cols-2">
-								<p>
-									Players: {activeMembers.length}/{room.maxPlayers}
-								</p>
-								<p>Starting Stack: {room.startingStack}</p>
-								<p>Small Blind: {room.smallBlind}</p>
-								<p>Big Blind: {room.bigBlind}</p>
-								<p>Ante: {room.ante}</p>
-								<p>Status: {room.isActive ? "Open" : "Closed"}</p>
-							</div>
-						</div>
-
-						<div className="rounded-lg border p-4">
-							<h2 className="mb-2 font-medium">Players</h2>
 							{members.length > 0 ? (
 								<div className="grid gap-2">
 									{members
@@ -1078,7 +895,6 @@ function RouteComponent() {
 												member.isActive;
 											const kickDisabled =
 												!canKick || isHandInProgress || kickUser.isPending;
-
 											const displayStack =
 												gameState &&
 												playerState &&
@@ -1086,7 +902,6 @@ function RouteComponent() {
 												gameState.phase !== "end_hand"
 													? playerState.stack
 													: member.currentStack;
-
 											const memberWantsToPlay =
 												member.wantsToPlayNextHand === true;
 											const playStatusText =
@@ -1151,22 +966,19 @@ function RouteComponent() {
 																		5)) && (
 																<div className="ml-1 flex flex-col items-center">
 																	<div className="flex items-center gap-1">
-																		{playerState?.hand &&
-																			playerState.hand.length > 0 &&
-																			!playerState.isFolded &&
-																			playerState.hand.map((c, index) => (
-																				<CardComponent
-																					key={`${c.rank}${c.suit}-${index}`}
-																					rank={c.rank}
-																					suit={c.suit}
-																					size="lg"
-																				/>
-																			))}
+																		{playerState?.hand?.map((c, index) => (
+																			<CardComponent
+																				key={`${c.rank}${c.suit}-${index}`}
+																				rank={c.rank}
+																				suit={c.suit}
+																				size="lg"
+																			/>
+																		))}
 																	</div>
 																	{bestHandDisplayData &&
 																		bestHandDisplayData.bestHand.length ===
 																			5 && (
-																			<p className="mt-1 text-muted-foreground text-sm">
+																			<p className="mt-1 text-muted-foreground text-xs">
 																				{bestHandDisplayData.rankName}
 																			</p>
 																		)}
@@ -1230,8 +1042,7 @@ function RouteComponent() {
 																		<DialogDescription>
 																			Are you sure you want to kick{" "}
 																			<strong>{userToKick?.username}</strong>{" "}
-																			from the room? They will need the join
-																			code to rejoin.
+																			from the room?
 																		</DialogDescription>
 																	</DialogHeader>
 																	<DialogFooter>
@@ -1241,12 +1052,11 @@ function RouteComponent() {
 																		<Button
 																			variant="destructive"
 																			onClick={() => {
-																				if (userToKick) {
+																				if (userToKick)
 																					kickUser.mutate({
 																						roomId,
 																						userIdToKick: userToKick.userId,
 																					});
-																				}
 																			}}
 																			disabled={kickUser.isPending}
 																		>
@@ -1270,47 +1080,106 @@ function RouteComponent() {
 							)}
 						</div>
 
-						<div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border p-4">
-							<h2 className="mb-4 font-medium">
-								Game Phase:{" "}
-								<span className="font-semibold">
-									{gameState?.phase?.replace(/_/g, " ").toUpperCase() ??
-										"WAITING"}
-								</span>
-							</h2>
-							{gameState ? (
-								<div className="w-full space-y-4 text-center">
-									<div className="mb-4">
-										<h3 className="mb-1 font-medium text-sm">
-											Community Cards
-										</h3>
-										<div className="flex min-h-[7rem] flex-wrap items-center justify-center gap-2">
-											{gameState.communityCards.length > 0 ? (
-												gameState.communityCards.map((card, index) => (
-													<CardComponent
-														key={`${card.rank}${card.suit}-${index}`}
-														rank={card.rank}
-														suit={card.suit}
-														size="lg"
-													/>
-												))
-											) : (
-												<span className="text-muted-foreground text-sm">
-													-- No cards dealt --
-												</span>
-											)}
+						<div className="flex min-h-[300px] flex-col rounded-lg border p-4">
+							<div className="text-center">
+								<h2 className="mb-4 font-medium">
+									Game Phase:{" "}
+									<span className="font-semibold">
+										{gameState?.phase?.replace(/_/g, " ").toUpperCase() ??
+											"WAITING"}
+									</span>
+								</h2>
+								{gameState ? (
+									<>
+										<div className="mb-4">
+											<h3 className="mb-1 font-medium text-sm">
+												Community Cards
+											</h3>
+											<div className="flex min-h-[7rem] flex-wrap items-center justify-center gap-2">
+												{gameState.communityCards.length > 0 ? (
+													gameState.communityCards.map((card, index) => (
+														<CardComponent
+															key={`${card.rank}${card.suit}-${index}`}
+															rank={card.rank}
+															suit={card.suit}
+															size="lg"
+														/>
+													))
+												) : (
+													<span className="text-muted-foreground text-sm">
+														-- No cards dealt --
+													</span>
+												)}
+											</div>
 										</div>
-									</div>
+										<p className="font-mono text-xl">Pot: {gameState.pot}</p>
+									</>
+								) : (
+									<p className="text-muted-foreground">
+										Waiting for game to start...
+									</p>
+								)}
+							</div>
 
-									<p className="font-mono text-xl">Pot: {gameState.pot}</p>
-
+							{gameState && (
+								<div className="my-4">
 									<HandHistory
 										history={gameState.handHistory}
 										currentPhase={gameState.phase}
 									/>
+								</div>
+							)}
 
+							<div className="mt-auto border-t pt-4">
+								<div className="flex flex-wrap items-center justify-center gap-2">
+									{canStartGame && (
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<span
+													tabIndex={
+														!canStartGame || startGame.isPending ? 0 : -1
+													}
+													className={!canStartGame ? "cursor-not-allowed" : ""}
+												>
+													<Button
+														variant="default"
+														size="sm"
+														onClick={() => {
+															if (canStartGame) startGame.mutate(roomId);
+														}}
+														disabled={!canStartGame || startGame.isPending}
+														aria-disabled={!canStartGame || startGame.isPending}
+														className={
+															!canStartGame
+																? "pointer-events-none opacity-50"
+																: ""
+														}
+													>
+														{startGame.isPending ? "Starting..." : "Start Game"}
+													</Button>
+												</span>
+											</TooltipTrigger>
+											{!canStartGame && !startGame.isPending && (
+												<TooltipContent>
+													<p>{startGameButtonTitle}</p>
+												</TooltipContent>
+											)}
+										</Tooltip>
+									)}
+									{showPlayButton && (
+										<Button
+											variant={wantsToPlay ? "secondary" : "outline"}
+											size="sm"
+											onClick={() =>
+												togglePlay.mutate({ roomId, wantsToPlay: !wantsToPlay })
+											}
+											disabled={togglePlay.isPending || !isConnected}
+										>
+											{togglePlay.isPending ? "..." : playButtonText}
+										</Button>
+									)}
 									{isMyTurn && currentPlayerState && (
-										<div className="mt-4 flex flex-wrap items-center justify-center gap-2 border-t pt-4">
+										<>
 											<Button
 												variant="destructive"
 												size="sm"
@@ -1318,7 +1187,6 @@ function RouteComponent() {
 											>
 												Fold
 											</Button>
-
 											{canCheck && (
 												<Button
 													variant="outline"
@@ -1328,7 +1196,6 @@ function RouteComponent() {
 													Check
 												</Button>
 											)}
-
 											{canCall && (
 												<Button
 													variant="outline"
@@ -1338,18 +1205,18 @@ function RouteComponent() {
 													Call {callAmount}
 												</Button>
 											)}
-
 											{(canBet || canRaise) && (
 												<div className="flex flex-wrap items-center justify-center gap-1">
 													<Input
 														type="number"
 														value={betAmount === 0 ? "" : betAmount}
-														onChange={(e) => {
-															const val = e.target.value;
+														onChange={(e) =>
 															setBetAmount(
-																val === "" ? 0 : Number.parseInt(val, 10) || 0,
-															);
-														}}
+																e.target.value === ""
+																	? 0
+																	: Number.parseInt(e.target.value, 10) || 0,
+															)
+														}
 														min={canBet ? minBetValue : minRaiseToValue}
 														max={maxBetOrRaiseValue}
 														step={room.bigBlind > 0 ? room.bigBlind : 1}
@@ -1400,8 +1267,8 @@ function RouteComponent() {
 																betAmount > maxBetOrRaiseValue) && (
 																<TooltipContent>
 																	<p>
-																		Raise amount must be between{" "}
-																		{minRaiseToValue} and {maxBetOrRaiseValue}.
+																		Raise must be between {minRaiseToValue} and{" "}
+																		{maxBetOrRaiseValue}.
 																	</p>
 																</TooltipContent>
 															)}
@@ -1409,59 +1276,49 @@ function RouteComponent() {
 													)}
 												</div>
 											)}
-
 											{(canBet || canRaise || canCall) && playerStack > 0 && (
 												<Button
 													variant="secondary"
 													size="sm"
 													onClick={() => {
 														const allInAmount = playerStack + playerCurrentBet;
-														if (canBet && allInAmount > 0) {
+														if (canBet && allInAmount > 0)
 															sendMessage({
 																type: "action",
 																action: "bet",
 																amount: allInAmount,
 															});
-														} else if (canRaise && allInAmount > currentBet) {
+														else if (canRaise && allInAmount > currentBet)
 															sendMessage({
 																type: "action",
 																action: "raise",
 																amount: allInAmount,
 															});
-														} else if (canCall) {
-															handleCall();
-														}
+														else if (canCall) handleCall();
 													}}
 												>
 													All In ({playerStack})
 												</Button>
 											)}
-										</div>
-									)}
-
-									{gameState.currentPlayerSeat !== null &&
-										!isMyTurn &&
-										gameState.phase !== "waiting" &&
-										gameState.phase !== "end_hand" && (
-											<p className="mt-4 text-muted-foreground text-sm">
-												Waiting for Seat {gameState.currentPlayerSeat}...
-											</p>
-										)}
-
-									{gameState.phase === "end_hand" && (
-										<p className="mt-4 font-semibold text-sm">
-											Hand finished. Waiting for next hand...
-										</p>
+										</>
 									)}
 								</div>
-							) : (
-								<p className="text-muted-foreground">
-									Waiting for game to start...
-								</p>
-							)}
+								{gameState?.currentPlayerSeat !== null &&
+									!isMyTurn &&
+									gameState?.phase !== "waiting" &&
+									gameState?.phase !== "end_hand" && (
+										<p className="mt-4 text-center text-muted-foreground text-sm">
+											Waiting for Seat {gameState?.currentPlayerSeat}...
+										</p>
+									)}
+								{gameState?.phase === "end_hand" && (
+									<p className="mt-4 text-center font-semibold text-sm">
+										Hand finished. Waiting for next hand...
+									</p>
+								)}
+							</div>
 						</div>
 					</div>
-
 					<RoomChat
 						messages={chatMessages}
 						sendMessage={sendChatMessage}
@@ -1471,12 +1328,8 @@ function RouteComponent() {
 						isAdmin={isAdmin}
 						onToggleFilter={
 							isAdmin
-								? (enabled) => {
-										updateFilter.mutate({
-											roomId,
-											filterProfanity: enabled,
-										});
-									}
+								? (enabled) =>
+										updateFilter.mutate({ roomId, filterProfanity: enabled })
 								: undefined
 						}
 						isUpdatingFilter={updateFilter.isPending}

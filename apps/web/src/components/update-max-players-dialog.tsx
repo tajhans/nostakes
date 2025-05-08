@@ -22,12 +22,14 @@ interface UpdateMaxPlayersDialogProps {
 	roomId: string;
 	currentMaxPlayers: number;
 	currentActivePlayers: number;
+	children?: React.ReactNode;
 }
 
 export function UpdateMaxPlayersDialog({
 	roomId,
 	currentMaxPlayers,
 	currentActivePlayers,
+	children,
 }: UpdateMaxPlayersDialogProps) {
 	const [isOpen, setIsOpen] = useState(false);
 	const queryClient = useQueryClient();
@@ -85,9 +87,11 @@ export function UpdateMaxPlayersDialog({
 	return (
 		<Dialog open={isOpen} onOpenChange={setIsOpen}>
 			<DialogTrigger asChild>
-				<Button variant="outline" size="sm">
-					Change Room Size
-				</Button>
+				{children || (
+					<Button variant="outline" size="sm">
+						Change Room Size
+					</Button>
+				)}
 			</DialogTrigger>
 			<DialogContent>
 				<form
