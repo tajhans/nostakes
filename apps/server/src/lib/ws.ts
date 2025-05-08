@@ -35,7 +35,7 @@ const rooms = new Map<
 	string,
 	Map<string, WSContext<ServerWebSocket<undefined>>>
 >();
-const MAX_MESSAGE_LENGTH = 32;
+const MAX_MESSAGE_LENGTH = 64;
 
 function broadcast(roomId: string, message: ServerWebSocketMessage) {
 	const roomConnections = rooms.get(roomId);
