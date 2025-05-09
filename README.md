@@ -17,6 +17,8 @@ This project was created with [Better-T-Stack](https://github.com/AmanVarshney01
 - **PostgreSQL** - DB for auth and persistent data
 - **Redis** - DB for non-persistent data
 - **Authentication** - Email & password authentication with Better Auth
+- **Resend** - Email delivery platform
+- **React Email** - Components for building emails with React
 - **Biome** - Linting and formatting
 - **Husky** - Git hooks for code quality
 
@@ -60,6 +62,8 @@ nostakes/
 ├── apps/
 │   ├── web/         # Frontend application (React, TanStack Router)
 │   └── server/      # Backend API (Hono, tRPC)
+├── packages/
+│   └── transactional/ # Email templates
 ```
 
 ## Available Scripts
