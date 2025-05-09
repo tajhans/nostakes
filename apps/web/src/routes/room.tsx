@@ -1,3 +1,4 @@
+import AdSenseAd from "@/components/adsense-ad";
 import { HandHistory } from "@/components/hand-history";
 import { RoomChat } from "@/components/room-chat";
 import { RoomSkeleton } from "@/components/room-skeleton";
@@ -107,6 +108,9 @@ function RouteComponent() {
 	const [userToKick, setUserToKick] = useState<RoomMemberInfo | null>(null);
 	const [isCloseRoomDialogOpen, setIsCloseRoomDialogOpen] = useState(false);
 	const [isLeaveRoomDialogOpen, setIsLeaveRoomDialogOpen] = useState(false);
+
+	const adClient = "ca-pub-4919267641095275";
+	const adSlotId = "5556877140";
 
 	const {
 		data: initialRoomData,
@@ -410,6 +414,7 @@ function RouteComponent() {
 		session?.user?.username,
 		isSessionPending,
 		navigate,
+		gameState?.currentPlayerSeat,
 	]);
 
 	useEffect(() => {
@@ -1344,6 +1349,28 @@ function RouteComponent() {
 						isUpdatingFilter={updateFilter.isPending}
 					/>
 				</div>
+
+				{adClient && adSlotId ? (
+					<div className="mt-8 py-4">
+						<AdSenseAd
+							adClient={adClient}
+							adSlot={adSlotId}
+							adFormat="auto"
+							responsive={true}
+						/>
+					</div>
+				) : (
+					<div className="mt-8 rounded-md border p-4 text-center text-muted-foreground">
+						<p>
+							Ad placeholder: Please configure your Ad Slot ID in{" "}
+							<code>nostakes/apps/web/src/routes/room.tsx</code>.
+						</p>
+						<p>
+							Ensure you have also added the AdSense script to your{" "}
+							<code>index.html</code>.
+						</p>
+					</div>
+				)}
 			</div>
 		</TooltipProvider>
 	);
