@@ -97,6 +97,7 @@ function RouteComponent() {
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 	const [isConnected, setIsConnected] = useState(false);
 	const [gameState, setGameState] = useState<GameState | null>(null);
+	const [maxPlayersDialogOpen, setMaxPlayersDialogOpen] = useState(false);
 	const wsRef = useRef<WebSocket | null>(null);
 	const [betAmount, setBetAmount] = useState<number>(0);
 	const [isCopied, setIsCopied] = useState(false);
@@ -714,20 +715,28 @@ function RouteComponent() {
 								Players: {activeMembers.length}/{room.maxPlayers}
 							</span>
 							{canUpdateMaxPlayers && (
-								<UpdateMaxPlayersDialog
-									roomId={roomId}
-									currentMaxPlayers={room.maxPlayers}
-									currentActivePlayers={activeMembers.length}
-								>
+								<>
 									<Tooltip>
 										<TooltipTrigger asChild>
-											<Button variant="ghost" size="icon" className="p-0">
+											<Button
+												variant="ghost"
+												size="icon"
+												className="p-0"
+												onClick={() => setMaxPlayersDialogOpen(true)}
+											>
 												<Pencil className="h-3 w-3" />
 											</Button>
 										</TooltipTrigger>
 										<TooltipContent>Change Room Size</TooltipContent>
 									</Tooltip>
-								</UpdateMaxPlayersDialog>
+									<UpdateMaxPlayersDialog
+										roomId={roomId}
+										currentMaxPlayers={room.maxPlayers}
+										currentActivePlayers={activeMembers.length}
+										open={maxPlayersDialogOpen}
+										onOpenChange={setMaxPlayersDialogOpen}
+									/>
+								</>
 							)}
 						</div>
 						<span>Stack: {room.startingStack}</span>

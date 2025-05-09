@@ -7,14 +7,13 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { trpc, trpcClient } from "@/utils/trpc";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -22,16 +21,17 @@ interface UpdateMaxPlayersDialogProps {
 	roomId: string;
 	currentMaxPlayers: number;
 	currentActivePlayers: number;
-	children?: React.ReactNode;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
 }
 
 export function UpdateMaxPlayersDialog({
 	roomId,
 	currentMaxPlayers,
 	currentActivePlayers,
-	children,
+	open,
+	onOpenChange,
 }: UpdateMaxPlayersDialogProps) {
-	const [isOpen, setIsOpen] = useState(false);
 	const queryClient = useQueryClient();
 
 	const updateMaxPlayersMutation = useMutation({
@@ -42,7 +42,7 @@ export function UpdateMaxPlayersDialog({
 			toast.success(data.message);
 			queryClient.invalidateQueries({ queryKey: trpc.getRooms.queryKey() });
 			form.reset();
-			setIsOpen(false);
+			onOpenChange(false);
 		},
 		onError: (error) => {
 			toast.error(`Update failed: ${error.message}`);
@@ -85,14 +85,7 @@ export function UpdateMaxPlayersDialog({
 	}, [currentMaxPlayers, form]);
 
 	return (
-		<Dialog open={isOpen} onOpenChange={setIsOpen}>
-			<DialogTrigger asChild>
-				{children || (
-					<Button variant="outline" size="sm">
-						Change Room Size
-					</Button>
-				)}
-			</DialogTrigger>
+		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<form
 					onSubmit={(e) => {
