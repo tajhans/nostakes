@@ -96,6 +96,10 @@ export function HandHistory({ history, currentPhase }: HandHistoryProps) {
 		let currentStageIndex = 0;
 
 		for (const line of history) {
+			if (line === "--- Hand End ---") {
+				continue;
+			}
+
 			const parsedLineNodes = parseHistoryLine(line);
 
 			if (line.startsWith("Flop dealt:")) {
@@ -106,8 +110,7 @@ export function HandHistory({ history, currentPhase }: HandHistoryProps) {
 				currentStageIndex = 3;
 			} else if (
 				line.startsWith("--- Showdown ---") ||
-				line.startsWith("--- Pot Distribution ---") ||
-				line.startsWith("--- Hand End ---")
+				line.startsWith("--- Pot Distribution ---")
 			) {
 				currentStageIndex = 4;
 			}
