@@ -1,4 +1,6 @@
-# nostakes
+# No Stakes Poker
+
+No Stakes Poker is a platform for playing Texas Hold'em no-limit poker with friends, entirely for fun and without having to wager any real money. It allows users to create private rooms, customize game settings like starting stacks and blinds, and enjoy the strategic elements of poker in a risk-free environment.
 
 This project was created with [Better-T-Stack](https://github.com/AmanVarshney01/create-better-t-stack), a modern TypeScript stack that combines React, TanStack Router, Hono, tRPC, and more.
 
