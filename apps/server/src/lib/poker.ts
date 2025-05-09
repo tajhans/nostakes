@@ -1391,7 +1391,6 @@ function determineWinner(gameState: GameState): GameState {
 			draft.handHistory.push(
 				`Seat ${winner.seatNumber} wins ${totalPot} (uncontested).`,
 			);
-			draft.pot = 0;
 		} else if (playersToShowdown.length > 1) {
 			const results: Record<string, HandEvaluationResult> = {};
 			draft.handHistory.push("Evaluating hands...");
@@ -1417,6 +1416,7 @@ function determineWinner(gameState: GameState): GameState {
 
 			const pots = calculatePots(draft.playerStates);
 			let totalAwarded = 0;
+			let accumulatedUnawardedAmount = 0;
 
 			draft.handHistory.push("--- Pot Distribution ---");
 
@@ -1488,12 +1488,79 @@ function determineWinner(gameState: GameState): GameState {
 						);
 					}
 				} else {
+					accumulatedUnawardedAmount += pot.amount;
 					draft.handHistory.push(
-						`Error: No eligible winners found for ${potName}. Pot amount ${pot.amount} unawarded.`,
+						`${potName} (${pot.amount}) has no direct winners. Its amount will be redistributed.`,
 					);
 				}
 			}
-			draft.pot = 0;
+
+			if (accumulatedUnawardedAmount > 0 && playersToShowdown.length > 0) {
+				let overallBestRank = -1;
+				let overallWinners: string[] = [];
+				let overallKickers: number[] = [];
+
+				for (const player of playersToShowdown) {
+					const result = results[player.userId];
+					if (!result || result.bestHand.length === 0) continue;
+
+					if (result.rankValue > overallBestRank) {
+						overallBestRank = result.rankValue;
+						overallWinners = [player.userId];
+						overallKickers = result.kickers;
+					} else if (result.rankValue === overallBestRank) {
+						const kickerComparison = compareKickers(
+							result.kickers,
+							overallKickers,
+						);
+						if (kickerComparison > 0) {
+							overallWinners = [player.userId];
+							overallKickers = result.kickers;
+						} else if (kickerComparison === 0) {
+							overallWinners.push(player.userId);
+						}
+					}
+				}
+
+				if (overallWinners.length > 0) {
+					const amountPerOverallWinner = Math.floor(
+						accumulatedUnawardedAmount / overallWinners.length,
+					);
+					let remainderOverall =
+						accumulatedUnawardedAmount % overallWinners.length;
+
+					const sortedOverallWinners = overallWinners.sort((a, b) => {
+						const seatA = draft.playerStates[a].seatNumber;
+						const seatB = draft.playerStates[b].seatNumber;
+						const maxSeats = Math.max(
+							...Object.values(draft.playerStates).map((p) => p.seatNumber),
+							10,
+						);
+						const aRel = (seatA - draft.smallBlindSeat + maxSeats) % maxSeats;
+						const bRel = (seatB - draft.smallBlindSeat + maxSeats) % maxSeats;
+						return aRel - bRel;
+					});
+
+					for (const winnerId of sortedOverallWinners) {
+						let award = amountPerOverallWinner;
+						if (remainderOverall > 0) {
+							award += 1;
+							remainderOverall -= 1;
+						}
+						if (draft.playerStates[winnerId]) {
+							draft.playerStates[winnerId].stack += award;
+							totalAwarded += award;
+							draft.handHistory.push(
+								`Seat ${draft.playerStates[winnerId].seatNumber} wins ${award} from redistributed pots.`,
+							);
+						}
+					}
+				} else {
+					draft.handHistory.push(
+						`Warning: Could not redistribute unawarded amount of ${accumulatedUnawardedAmount}.`,
+					);
+				}
+			}
 
 			const totalPotFromBets = Object.values(draft.playerStates).reduce(
 				(sum, p) => sum + p.totalBet,
@@ -1503,10 +1570,17 @@ function determineWinner(gameState: GameState): GameState {
 				console.warn(
 					`Pot distribution discrepancy: Total Pot (${totalPotFromBets}), Total Awarded (${totalAwarded}). Remainder: ${totalPotFromBets - totalAwarded}`,
 				);
+
+				console.warn("Pots calculated by calculatePots:", JSON.stringify(pots));
+				console.warn(
+					"Player states at showdown (before this determination):",
+					JSON.stringify(gameState.playerStates),
+				);
+				console.warn("Player results:", JSON.stringify(results));
+				console.warn("Accumulated Unawarded:", accumulatedUnawardedAmount);
 			}
 		} else {
 			draft.handHistory.push("Error: No players eligible for showdown.");
-			draft.pot = 0;
 		}
 
 		for (const p of Object.values(draft.playerStates)) {
