@@ -60,7 +60,6 @@ const options = {
 export const auth = betterAuth({
 	...options,
 	plugins: [
-		username(),
 		...(options.plugins ?? []),
 		customSession(async ({ user, session }) => {
 			const imageBase64 = await getUserImageBase64(session.userId);
