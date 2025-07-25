@@ -24,8 +24,8 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { trpcClient } from "@/lib/utils/trpc";
 import type { RoomMemberInfo } from "@/types";
-import { trpcClient } from "@/utils/trpc";
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";

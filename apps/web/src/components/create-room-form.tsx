@@ -9,7 +9,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { trpc, trpcClient } from "@/utils/trpc";
+import { trpc, trpcClient } from "@/lib/utils/trpc";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -35,6 +35,7 @@ const createRoomSchema = z.object({
 		.positive("Big blind must be positive")
 		.default(5),
 	filterProfanity: z.boolean().default(false),
+	public: z.boolean().default(false),
 });
 
 type CreateRoomFormData = z.infer<typeof createRoomSchema>;
@@ -65,6 +66,7 @@ export default function CreateRoomForm() {
 			bigBlind: 20,
 			ante: 5,
 			filterProfanity: false,
+			public: false,
 		},
 		onSubmit: async ({ value }) => {
 			await createRoom.mutateAsync(value);
@@ -224,23 +226,41 @@ export default function CreateRoomForm() {
 							</div>
 						)}
 					</form.Field>
-					<form.Field name="filterProfanity">
-						{(field) => (
-							<div className="grid grid-cols-4 items-center gap-4">
-								<Label htmlFor={field.name} className="text-right">
-									Filter Profanity
-								</Label>
-								<div className="col-span-3 flex items-center">
-									<Switch
-										id={field.name}
-										name={field.name}
-										checked={field.state.value}
-										onCheckedChange={field.handleChange}
-									/>
-								</div>
-							</div>
-						)}
-					</form.Field>
+					<div className="grid grid-cols-4 items-center gap-4">
+						<Label className="text-right">Options</Label>
+						<div className="col-span-3 flex items-center gap-6">
+							<form.Field name="filterProfanity">
+								{(field) => (
+									<div className="flex items-center gap-2">
+										<Switch
+											id={field.name}
+											name={field.name}
+											checked={field.state.value}
+											onCheckedChange={field.handleChange}
+										/>
+										<Label htmlFor={field.name} className="text-sm">
+											Filter Profanity
+										</Label>
+									</div>
+								)}
+							</form.Field>
+							<form.Field name="public">
+								{(field) => (
+									<div className="flex items-center gap-2">
+										<Switch
+											id={field.name}
+											name={field.name}
+											checked={field.state.value}
+											onCheckedChange={field.handleChange}
+										/>
+										<Label htmlFor={field.name} className="text-sm">
+											Public
+										</Label>
+									</div>
+								)}
+							</form.Field>
+						</div>
+					</div>
 				</div>
 				<DialogFooter>
 					<form.Subscribe>

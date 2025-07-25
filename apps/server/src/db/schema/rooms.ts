@@ -36,6 +36,7 @@ export const room = pgTable("room", {
 		.notNull()
 		.references(() => user.id, { onDelete: "cascade" }),
 	filterProfanity: boolean("filter_profanity").notNull().default(false),
+	public: boolean("public").notNull().default(false),
 });
 
 export const roomMember = pgTable("room_member", {

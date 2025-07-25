@@ -12,7 +12,7 @@ import {
 	InputOTPSeparator,
 	InputOTPSlot,
 } from "@/components/ui/input-otp";
-import { trpc, trpcClient } from "@/utils/trpc";
+import { trpc, trpcClient } from "@/lib/utils/trpc";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";

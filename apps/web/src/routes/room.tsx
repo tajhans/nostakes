@@ -1,6 +1,7 @@
-import AdSenseAd from "@/components/adsense-ad";
 import { HandHistory } from "@/components/hand-history";
+import { suitMap } from "@/components/hand-history";
 import { RoomChat } from "@/components/room-chat";
+import { RoomInfoBar } from "@/components/room-info-bar";
 import { RoomSkeleton } from "@/components/room-skeleton";
 import { TransferChipsDialog } from "@/components/transfer-chips-dialog";
 import { Button } from "@/components/ui/button";
@@ -21,20 +22,18 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UpdateMaxPlayersDialog } from "@/components/update-max-players-dialog";
 import { authClient } from "@/lib/auth-client";
 import { evaluateHand } from "@/lib/poker";
 import { cn } from "@/lib/utils";
-import { trpc } from "@/utils/trpc";
-import { trpcClient } from "@/utils/trpc";
+import { trpc } from "@/lib/utils/trpc";
+import { trpcClient } from "@/lib/utils/trpc";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { TRPCClientError } from "@trpc/client";
 import { applyPatch } from "fast-json-patch";
-import { Check, Circle, CircleDot, Copy, Pencil, UserX } from "lucide-react";
+import { UserX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { suitMap } from "../components/hand-history";
 
 import type {
 	CardComponentProps,
@@ -98,19 +97,12 @@ function RouteComponent() {
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 	const [isConnected, setIsConnected] = useState(false);
 	const [gameState, setGameState] = useState<GameState | null>(null);
-	const [maxPlayersDialogOpen, setMaxPlayersDialogOpen] = useState(false);
 	const wsRef = useRef<WebSocket | null>(null);
 	const [betAmount, setBetAmount] = useState<number>(0);
-	const [isCopied, setIsCopied] = useState(false);
 	const hasShownInitialConnectToast = useRef(false);
 	const reconnectAttempt = useRef(0);
 	const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
 	const [userToKick, setUserToKick] = useState<RoomMemberInfo | null>(null);
-	const [isCloseRoomDialogOpen, setIsCloseRoomDialogOpen] = useState(false);
-	const [isLeaveRoomDialogOpen, setIsLeaveRoomDialogOpen] = useState(false);
-
-	const adClient = "ca-pub-4919267641095275";
-	const adSlotId = "5556877140";
 
 	const {
 		data: initialRoomData,
@@ -146,11 +138,9 @@ function RouteComponent() {
 			trpcClient.closeRoom.mutate({ roomId: rId }),
 		onSuccess: () => {
 			toast.success("Room closed successfully");
-			setIsCloseRoomDialogOpen(false);
 		},
 		onError: (error) => {
 			toast.error(`Failed to close room: ${error.message}`);
-			setIsCloseRoomDialogOpen(false);
 		},
 	});
 
@@ -159,12 +149,10 @@ function RouteComponent() {
 			trpcClient.leaveRoom.mutate({ roomId: rId }),
 		onSuccess: () => {
 			toast.success("You have left the room.");
-			setIsLeaveRoomDialogOpen(false);
 			navigate({ to: "/" });
 		},
 		onError: (error) => {
 			toast.error(`Failed to leave room: ${error.message}`);
-			setIsLeaveRoomDialogOpen(false);
 		},
 	});
 
@@ -398,7 +386,7 @@ function RouteComponent() {
 				}
 			}
 		};
-		ws.onerror = (error: Event) => {
+		ws.onerror = () => {
 			if (wsRef.current === ws) toast.error("WebSocket connection error.");
 		};
 		return () => {
@@ -438,44 +426,6 @@ function RouteComponent() {
 	const sendChatMessage = (messageText: string) => {
 		if (messageText.trim())
 			sendMessage({ type: "chat", message: messageText.trim() });
-	};
-	const handleCopyCode = async () => {
-		if (!initialRoomData?.joinCode) return;
-		const codeToCopy = initialRoomData.joinCode;
-
-		try {
-			await navigator.clipboard.writeText(codeToCopy);
-			setIsCopied(true);
-			toast.success("Room code copied to clipboard!");
-			setTimeout(() => setIsCopied(false), 2000);
-		} catch (err) {
-			console.error(
-				"Failed to copy room code using navigator.clipboard: ",
-				err,
-			);
-			const textArea = document.createElement("textarea");
-			textArea.value = codeToCopy;
-			textArea.style.position = "fixed";
-			textArea.style.opacity = "0";
-			document.body.appendChild(textArea);
-			textArea.focus();
-			textArea.select();
-			try {
-				const successful = document.execCommand("copy");
-				if (successful) {
-					setIsCopied(true);
-					toast.success("Room code copied to clipboard! (fallback)");
-					setTimeout(() => setIsCopied(false), 2000);
-				} else {
-					throw new Error("Fallback copy command failed");
-				}
-			} catch (fallbackErr) {
-				console.error("Fallback copy failed: ", fallbackErr);
-				toast.error("Failed to copy room code.");
-			} finally {
-				document.body.removeChild(textArea);
-			}
-		}
 	};
 
 	const handleFold = () => sendMessage({ type: "action", action: "fold" });
@@ -653,10 +603,6 @@ function RouteComponent() {
 	const maxBetOrRaiseValue = playerStack + playerCurrentBet;
 	const handInProgressReason =
 		"Cannot perform this action while a hand is in progress.";
-	const closeRoomDisabled =
-		closeRoom.isPending || !isConnected || isHandInProgress;
-	const leaveRoomDisabled =
-		leaveRoom.isPending || !isConnected || isHandInProgress;
 	const transferChipsDisabled =
 		!isConnected || isHandInProgress || !currentUserMemberInfo?.isActive;
 	const transferChipsDisabledReason = !isConnected
@@ -670,203 +616,18 @@ function RouteComponent() {
 	return (
 		<TooltipProvider>
 			<div className="container mx-auto max-w-5xl px-4 py-2">
-				<div className="mb-4 flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
-					<div className="flex items-center gap-2">
-						<span className="font-medium text-sm">Code:</span>
-						<div className="flex items-center rounded-md border bg-secondary px-2 py-1">
-							<span className="font-mono text-sm tracking-wider">
-								{room.joinCode
-									? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
-									: "N/A"}
-							</span>
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<Button
-										variant="ghost"
-										size="icon"
-										className="ml-1 h-6 w-6"
-										onClick={handleCopyCode}
-										disabled={!room.joinCode || isCopied}
-									>
-										{isCopied ? (
-											<Check className="h-4 w-4 text-green-500" />
-										) : (
-											<Copy className="h-4 w-4" />
-										)}
-									</Button>
-								</TooltipTrigger>
-								<TooltipContent>
-									<p>Copy Join Code</p>
-								</TooltipContent>
-							</Tooltip>
-						</div>
-						<Tooltip>
-							<TooltipTrigger>
-								{isConnected ? (
-									<CircleDot className="h-4 w-4 text-green-600" />
-								) : (
-									<Circle className="h-4 w-4 animate-pulse text-red-600" />
-								)}
-							</TooltipTrigger>
-							<TooltipContent>
-								<p>{isConnected ? "Connected" : "Disconnected"}</p>
-							</TooltipContent>
-						</Tooltip>
-					</div>
-
-					<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground text-sm">
-						<div className="flex items-center gap-1">
-							<span>
-								Players: {activeMembers.length}/{room.maxPlayers}
-							</span>
-							{canUpdateMaxPlayers && (
-								<>
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<Button
-												variant="ghost"
-												size="icon"
-												className="p-0"
-												onClick={() => setMaxPlayersDialogOpen(true)}
-											>
-												<Pencil className="h-3 w-3" />
-											</Button>
-										</TooltipTrigger>
-										<TooltipContent>Change Room Size</TooltipContent>
-									</Tooltip>
-									<UpdateMaxPlayersDialog
-										roomId={roomId}
-										currentMaxPlayers={room.maxPlayers}
-										currentActivePlayers={activeMembers.length}
-										open={maxPlayersDialogOpen}
-										onOpenChange={setMaxPlayersDialogOpen}
-									/>
-								</>
-							)}
-						</div>
-						<span>Stack: {room.startingStack}</span>
-						<span>Small Blind: {room.smallBlind}</span>
-						<span>Big Blind: {room.bigBlind}</span>
-						<span>Ante: {room.ante}</span>
-					</div>
-
-					<div className="flex flex-wrap items-center justify-end gap-2">
-						{isAdmin && room.isActive && (
-							<Dialog
-								open={isCloseRoomDialogOpen}
-								onOpenChange={setIsCloseRoomDialogOpen}
-							>
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<span
-											tabIndex={closeRoomDisabled ? 0 : -1}
-											className={closeRoomDisabled ? "cursor-not-allowed" : ""}
-										>
-											<DialogTrigger asChild>
-												<Button
-													variant="destructive"
-													size="sm"
-													disabled={closeRoomDisabled}
-													aria-disabled={closeRoomDisabled}
-													className={
-														closeRoomDisabled
-															? "pointer-events-none opacity-50"
-															: ""
-													}
-												>
-													{closeRoom.isPending ? "Closing..." : "Close Room"}
-												</Button>
-											</DialogTrigger>
-										</span>
-									</TooltipTrigger>
-									{isHandInProgress && (
-										<TooltipContent>
-											<p>{handInProgressReason}</p>
-										</TooltipContent>
-									)}
-								</Tooltip>
-								<DialogContent>
-									<DialogHeader>
-										<DialogTitle>Close Room?</DialogTitle>
-										<DialogDescription>
-											Are you sure you want to close this room? All players will
-											be removed and the game will end.
-										</DialogDescription>
-									</DialogHeader>
-									<DialogFooter>
-										<DialogClose asChild>
-											<Button variant="outline">Cancel</Button>
-										</DialogClose>
-										<Button
-											variant="destructive"
-											onClick={() => closeRoom.mutate(roomId)}
-											disabled={closeRoom.isPending}
-										>
-											{closeRoom.isPending ? "Closing..." : "Close Room"}
-										</Button>
-									</DialogFooter>
-								</DialogContent>
-							</Dialog>
-						)}
-						{!isAdmin && currentUserMemberInfo?.isActive && (
-							<Dialog
-								open={isLeaveRoomDialogOpen}
-								onOpenChange={setIsLeaveRoomDialogOpen}
-							>
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<span
-											tabIndex={leaveRoomDisabled ? 0 : -1}
-											className={leaveRoomDisabled ? "cursor-not-allowed" : ""}
-										>
-											<DialogTrigger asChild>
-												<Button
-													variant="outline"
-													size="sm"
-													disabled={leaveRoomDisabled}
-													aria-disabled={leaveRoomDisabled}
-													className={
-														leaveRoomDisabled
-															? "pointer-events-none opacity-50"
-															: ""
-													}
-												>
-													{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
-												</Button>
-											</DialogTrigger>
-										</span>
-									</TooltipTrigger>
-									{isHandInProgress && (
-										<TooltipContent>
-											<p>{handInProgressReason}</p>
-										</TooltipContent>
-									)}
-								</Tooltip>
-								<DialogContent>
-									<DialogHeader>
-										<DialogTitle>Leave Room?</DialogTitle>
-										<DialogDescription>
-											Are you sure you want to leave this room? You can rejoin
-											later.
-										</DialogDescription>
-									</DialogHeader>
-									<DialogFooter>
-										<DialogClose asChild>
-											<Button variant="outline">Cancel</Button>
-										</DialogClose>
-										<Button
-											variant="destructive"
-											onClick={() => leaveRoom.mutate(roomId)}
-											disabled={leaveRoom.isPending}
-										>
-											{leaveRoom.isPending ? "Leaving..." : "Leave Room"}
-										</Button>
-									</DialogFooter>
-								</DialogContent>
-							</Dialog>
-						)}
-					</div>
-				</div>
+				<RoomInfoBar
+					room={room}
+					roomId={roomId}
+					activeMembers={activeMembers}
+					isConnected={isConnected}
+					isAdmin={isAdmin}
+					isHandInProgress={isHandInProgress}
+					canUpdateMaxPlayers={canUpdateMaxPlayers}
+					closeRoom={closeRoom}
+					leaveRoom={leaveRoom}
+					currentUserMemberInfo={currentUserMemberInfo}
+				/>
 
 				<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
 					<div className="space-y-4">
@@ -1349,28 +1110,6 @@ function RouteComponent() {
 						isUpdatingFilter={updateFilter.isPending}
 					/>
 				</div>
-
-				{adClient && adSlotId ? (
-					<div className="mt-8 py-4">
-						<AdSenseAd
-							adClient={adClient}
-							adSlot={adSlotId}
-							adFormat="auto"
-							responsive={true}
-						/>
-					</div>
-				) : (
-					<div className="mt-8 rounded-md border p-4 text-center text-muted-foreground">
-						<p>
-							Ad placeholder: Please configure your Ad Slot ID in{" "}
-							<code>nostakes/apps/web/src/routes/room.tsx</code>.
-						</p>
-						<p>
-							Ensure you have also added the AdSense script to your{" "}
-							<code>index.html</code>.
-						</p>
-					</div>
-				)}
 			</div>
 		</TooltipProvider>
 	);

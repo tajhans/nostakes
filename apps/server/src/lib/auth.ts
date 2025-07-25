@@ -53,6 +53,7 @@ const options = {
 		crossSubDomainCookies: {
 			enabled: true,
 		},
+		cookiePrefix: "nostakes",
 	},
 	plugins: [username()],
 } satisfies BetterAuthOptions;

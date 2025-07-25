@@ -1,7 +1,5 @@
-import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { Link } from "@tanstack/react-router";
-import { User } from "lucide-react";
 import { ModeToggle } from "./mode-toggle";
 import { ProfilePicture } from "./profile-picture";
 

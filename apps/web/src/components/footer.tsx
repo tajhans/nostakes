@@ -5,7 +5,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { trpc } from "@/utils/trpc";
+import { trpc } from "@/lib/utils/trpc";
 import { useQuery } from "@tanstack/react-query";
 
 export function Footer() {
@@ -14,7 +14,7 @@ export function Footer() {
 	return (
 		<div className="py-2">
 			<Separator />
-			<div className="flex items-center justify-center gap-2 py-2">
+			<div className="flex items-center justify-center gap-2 py-2 pt-6">
 				<TooltipProvider>
 					<Tooltip>
 						<TooltipTrigger>

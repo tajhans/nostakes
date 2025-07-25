@@ -1,14 +1,15 @@
 import CreateRoomForm from "@/components/create-room-form";
 import JoinRoomForm from "@/components/join-room-form";
 import Loader from "@/components/loader";
+import { PublicRoomsTable } from "@/components/public-rooms-table";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { authClient } from "@/lib/auth-client";
-import { trpc } from "@/utils/trpc";
+import { trpc } from "@/lib/utils/trpc";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { PlayCircle, Settings, ShieldCheck, Users } from "lucide-react";
+import { Settings, ShieldCheck, Users } from "lucide-react";
 
 export const Route = createFileRoute("/")({
 	component: HomeComponent,
@@ -23,6 +24,11 @@ function HomeComponent() {
 		enabled: !!session,
 	});
 
+	const { data: publicRooms, isLoading: isPublicRoomsLoading } = useQuery({
+		...trpc.getPublicRooms.queryOptions(),
+		enabled: !!session,
+	});
+
 	if (isSessionPending) {
 		return (
 			<div className="flex flex-1 items-center justify-center">
@@ -32,69 +38,81 @@ function HomeComponent() {
 	}
 
 	return (
-		<div className="container mx-auto max-w-5xl px-4 py-8">
+		<div className="container mx-auto max-w-7xl px-4 py-8">
 			{session ? (
-				<div className="mx-auto max-w-3xl">
-					<div className="grid gap-6">
-						<div>
-							{isRoomLoading ? (
-								<div className="rounded-lg border p-4 text-center">
-									<span className="text-muted-foreground">
-										Loading room status...
-									</span>
-								</div>
-							) : activeRoom ? (
-								<div className="rounded-lg border p-4 text-center">
-									<p className="mb-2 font-semibold">
-										You have an active room session!
-									</p>
-									<Link to="/room" search={{ id: activeRoom.roomId }}>
-										<Button variant="default" size="lg">
-											Reconnect to Room
+				<div className="mx-auto max-w-6xl space-y-8">
+					<div className="mx-auto max-w-3xl">
+						<div className="grid gap-6">
+							<div>
+								{isRoomLoading ? (
+									<div className="rounded-lg border p-4 text-center">
+										<span className="text-muted-foreground">
+											Loading room status...
+										</span>
+									</div>
+								) : activeRoom ? (
+									<div className="rounded-lg border p-4 text-center">
+										<p className="mb-2 font-semibold">
+											You have an active room session!
+										</p>
+										<Link to="/room" search={{ id: activeRoom.roomId }}>
+											<Button variant="default" size="lg">
+												Reconnect to Room
+											</Button>
+										</Link>
+									</div>
+								) : (
+									<div className="rounded-lg border p-4 text-center">
+										<span className="text-muted-foreground">
+											No active room session.
+										</span>
+									</div>
+								)}
+							</div>
+
+							<div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+								<Dialog>
+									<DialogTrigger asChild>
+										<Button size="lg" className="w-full sm:w-auto">
+											Create New Room
 										</Button>
-									</Link>
-								</div>
-							) : (
-								<div className="rounded-lg border p-4 text-center">
-									<span className="text-muted-foreground">
-										No active room session.
-									</span>
-								</div>
-							)}
+									</DialogTrigger>
+									<CreateRoomForm />
+								</Dialog>
+
+								<Separator
+									orientation="vertical"
+									className="hidden h-10 sm:block"
+								/>
+								<Separator
+									orientation="horizontal"
+									className="block w-full sm:hidden"
+								/>
+
+								<Dialog>
+									<DialogTrigger asChild>
+										<Button
+											variant="outline"
+											size="lg"
+											className="w-full sm:w-auto"
+										>
+											Join Existing Room
+										</Button>
+									</DialogTrigger>
+									<JoinRoomForm />
+								</Dialog>
+							</div>
 						</div>
+					</div>
 
-						<div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
-							<Dialog>
-								<DialogTrigger asChild>
-									<Button size="lg" className="w-full sm:w-auto">
-										Create New Room
-									</Button>
-								</DialogTrigger>
-								<CreateRoomForm />
-							</Dialog>
-
-							<Separator
-								orientation="vertical"
-								className="hidden h-10 sm:block"
-							/>
-							<Separator
-								orientation="horizontal"
-								className="block w-full sm:hidden"
-							/>
-
-							<Dialog>
-								<DialogTrigger asChild>
-									<Button
-										variant="outline"
-										size="lg"
-										className="w-full sm:w-auto"
-									>
-										Join Existing Room
-									</Button>
-								</DialogTrigger>
-								<JoinRoomForm />
-							</Dialog>
-						</div>
+					<div className="space-y-4">
+						{isPublicRoomsLoading ? (
+							<div className="flex justify-center py-8">
+								<Loader />
+							</div>
+						) : (
+							<PublicRoomsTable rooms={publicRooms || []} />
+						)}
 					</div>
 				</div>
 			) : (

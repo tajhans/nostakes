@@ -152,7 +152,11 @@ export default function SignUpForm({
 			</form>
 
 			<div className="mt-4 text-center">
-				<Button variant="link" onClick={onSwitchToSignIn}>
+				<Button
+					variant="link"
+					onClick={onSwitchToSignIn}
+					className="cursor-pointer"
+				>
 					Already have an account? Sign In
 				</Button>
 			</div>

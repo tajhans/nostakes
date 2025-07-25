@@ -40,6 +40,7 @@ const createRoomSchema = z.object({
 	bigBlind: z.number().positive("Big blind must be positive"),
 	ante: z.number().min(0, "Ante cannot be negative").default(5),
 	filterProfanity: z.boolean().default(false),
+	public: z.boolean().default(false),
 });
 
 const joinRoomSchema = z.object({
@@ -183,6 +184,7 @@ export const appRouter = router({
 					ante: input.ante,
 					ownerId: ctx.session.user.id,
 					filterProfanity: input.filterProfanity,
+					public: input.public,
 				})
 				.returning();
 
@@ -434,6 +436,7 @@ export const appRouter = router({
 				createdAt: room.createdAt,
 				ownerId: room.ownerId,
 				filterProfanity: room.filterProfanity,
+				public: room.public,
 			})
 			.from(room)
 			.leftJoin(roomMember, eq(roomMember.roomId, room.id))
@@ -455,7 +458,7 @@ export const appRouter = router({
 			}),
 		);
 
-		const result = userRoomsData.map((r) => {
+		return userRoomsData.map((r) => {
 			const members = membersByRoom[r.id] || [];
 			return {
 				...r,
@@ -465,8 +468,51 @@ export const appRouter = router({
 				})),
 			};
 		});
+	}),
 
-		return result;
+	getPublicRooms: protectedProcedure.query(async () => {
+		const publicRoomsData = await db
+			.select({
+				id: room.id,
+				joinCode: room.joinCode,
+				maxPlayers: room.maxPlayers,
+				startingStack: room.startingStack,
+				smallBlind: room.smallBlind,
+				bigBlind: room.bigBlind,
+				ante: room.ante,
+				isActive: room.isActive,
+				createdAt: room.createdAt,
+				ownerId: room.ownerId,
+				filterProfanity: room.filterProfanity,
+				public: room.public,
+			})
+			.from(room)
+			.where(eq(room.public, true))
+			.orderBy(desc(room.isActive), desc(room.createdAt))
+			.limit(100);
+
+		const roomIds = publicRoomsData.map((r) => r.id);
+		if (roomIds.length === 0) {
+			return [];
+		}
+
+		const membersByRoom: Record<string, RoomMemberInfo[]> = {};
+		await Promise.all(
+			roomIds.map(async (roomId) => {
+				membersByRoom[roomId] = await getAllRoomMembers(roomId);
+			}),
+		);
+
+		return publicRoomsData.map((r) => {
+			const members = membersByRoom[r.id] || [];
+			return {
+				...r,
+				members: members.map((m) => ({
+					...m,
+					wantsToPlayNextHand: m.wantsToPlayNextHand ?? false,
+				})),
+			};
+		});
 	}),
 
 	updateProfile: protectedProcedure
@@ -534,9 +580,6 @@ export const appRouter = router({
 						error,
 					);
 
-					newImageUrl = oldImageUrl;
-					newImageBase64 = oldImageBase64;
-					newKey = oldKey;
 					throw new TRPCError({
 						code: "INTERNAL_SERVER_ERROR",
 						message: "Failed to update profile picture.",
@@ -1051,5 +1094,3 @@ export const appRouter = router({
 			};
 		}),
 });
-
-export type AppRouter = typeof appRouter;

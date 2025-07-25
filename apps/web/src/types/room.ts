@@ -23,4 +23,5 @@ export interface RoomData {
 	ownerId: string;
 	members: RoomMemberInfo[];
 	filterProfanity: boolean;
+	public: boolean;
 }
