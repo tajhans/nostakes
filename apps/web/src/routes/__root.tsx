@@ -26,17 +26,56 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 	head: () => ({
 		meta: [
 			{
-				title: "No Stakes Poker",
+				title: "No Stakes Poker - Free Texas Hold'em Online",
 			},
 			{
 				name: "description",
-				content: "Texas Hold'em no limit poker with no stakes.",
+				content:
+					"Play free Texas Hold'em poker online with friends. Create private rooms, customize games, and enjoy poker without real money stakes.",
+			},
+			{
+				name: "keywords",
+				content:
+					"free poker, texas holdem, online poker, poker with friends, no money poker, private poker rooms",
+			},
+			{
+				name: "author",
+				content: "No Stakes Poker",
+			},
+			{
+				property: "og:title",
+				content: "No Stakes Poker - Free Texas Hold'em Online",
+			},
+			{
+				property: "og:description",
+				content:
+					"Play free Texas Hold'em poker online with friends. Create private rooms, customize games, and enjoy poker without real money stakes.",
+			},
+			{
+				property: "og:type",
+				content: "website",
+			},
+			{
+				property: "og:url",
+				content: "https://nostakes.poker",
+			},
+			{
+				name: "twitter:card",
+				content: "summary_large_image",
+			},
+			{
+				name: "viewport",
+				content: "width=device-width, initial-scale=1",
 			},
 		],
 		links: [
 			{
 				rel: "icon",
 				href: "/favicon.ico",
+			},
+			{
+				rel: "canonical",
+				href: "https://nostakes.poker",
 			},
 		],
 	}),

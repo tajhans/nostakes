@@ -1,4 +1,5 @@
 import CreateRoomForm from "@/components/create-room-form";
+import { IndexSkeleton } from "@/components/index-skeleton";
 import JoinRoomForm from "@/components/join-room-form";
 import Loader from "@/components/loader";
 import { PublicRoomsTable } from "@/components/public-rooms-table";
@@ -13,6 +14,23 @@ import { Settings, ShieldCheck, Users } from "lucide-react";
 
 export const Route = createFileRoute("/")({
 	component: HomeComponent,
+	head: () => ({
+		meta: [
+			{
+				title: "No Stakes Poker - Free Online Texas Hold'em with Friends",
+			},
+			{
+				name: "description",
+				content:
+					"Join the best free online poker experience. Create private or public rooms, play Texas Hold'em with friends, and enjoy poker without real money. Start playing now!",
+			},
+			{
+				name: "keywords",
+				content:
+					"free poker, texas holdem, online poker, poker with friends, no money poker, private poker rooms, public poker rooms, poker game, free poker online, texas hold em",
+			},
+		],
+	}),
 });
 
 function HomeComponent() {
@@ -30,11 +48,7 @@ function HomeComponent() {
 	});
 
 	if (isSessionPending) {
-		return (
-			<div className="flex flex-1 items-center justify-center">
-				<Loader />
-			</div>
-		);
+		return <IndexSkeleton />;
 	}
 
 	return (
