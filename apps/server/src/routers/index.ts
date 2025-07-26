@@ -1,11 +1,12 @@
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { getPlaiceholder } from "plaiceholder";
 import sharp from "sharp";
 import { z } from "zod";
 import { db } from "../db";
 import { user } from "../db/schema/auth";
+import { friendship } from "../db/schema/friendships";
 import { room, roomMember } from "../db/schema/rooms";
 import { startNewHand } from "../lib/poker";
 import {
@@ -87,6 +88,22 @@ const updateMaxPlayersSchema = z.object({
 const updateRoomFilterSchema = z.object({
 	roomId: z.string().min(1, "Room ID is required"),
 	filterProfanity: z.boolean(),
+});
+
+const sendFriendRequestSchema = z.object({
+	friendId: z.string().min(1, "Friend ID is required"),
+});
+
+const acceptFriendRequestSchema = z.object({
+	friendshipUserId: z.string().min(1, "Friendship user ID is required"),
+});
+
+const declineFriendRequestSchema = z.object({
+	friendshipUserId: z.string().min(1, "Friendship user ID is required"),
+});
+
+const removeFriendSchema = z.object({
+	friendId: z.string().min(1, "Friend ID is required"),
 });
 
 async function getUserActiveRoom(userId: string) {
@@ -470,8 +487,27 @@ export const appRouter = router({
 		});
 	}),
 
-	getPublicRooms: protectedProcedure.query(async () => {
-		const publicRoomsData = await db
+	getDiscoverableRooms: protectedProcedure.query(async ({ ctx }) => {
+		const userId = ctx.session.user.id;
+
+		const friendshipsQuery = await db
+			.select({
+				friendId: friendship.friendId,
+				userId: friendship.userId,
+			})
+			.from(friendship)
+			.where(
+				and(
+					eq(friendship.status, "accepted"),
+					or(eq(friendship.userId, userId), eq(friendship.friendId, userId)),
+				),
+			);
+
+		const friendIds = friendshipsQuery.map((f) =>
+			f.userId === userId ? f.friendId : f.userId,
+		);
+
+		const discoverableRoomsData = await db
 			.select({
 				id: room.id,
 				joinCode: room.joinCode,
@@ -487,11 +523,19 @@ export const appRouter = router({
 				public: room.public,
 			})
 			.from(room)
-			.where(eq(room.public, true))
-			.orderBy(desc(room.isActive), desc(room.createdAt))
+			.where(
+				and(
+					eq(room.isActive, true),
+					or(
+						eq(room.public, true),
+						friendIds.length > 0 ? inArray(room.ownerId, friendIds) : undefined,
+					),
+				),
+			)
+			.orderBy(desc(room.createdAt))
 			.limit(100);
 
-		const roomIds = publicRoomsData.map((r) => r.id);
+		const roomIds = discoverableRoomsData.map((r) => r.id);
 		if (roomIds.length === 0) {
 			return [];
 		}
@@ -503,7 +547,7 @@ export const appRouter = router({
 			}),
 		);
 
-		return publicRoomsData.map((r) => {
+		return discoverableRoomsData.map((r) => {
 			const members = membersByRoom[r.id] || [];
 			return {
 				...r,
@@ -1091,6 +1135,301 @@ export const appRouter = router({
 				success: true,
 				message: `Profanity filter ${filterProfanity ? "enabled" : "disabled"}.`,
 				filterProfanity: updatedRoom.filterProfanity,
+			};
+		}),
+
+	sendFriendRequest: protectedProcedure
+		.input(sendFriendRequestSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { friendId } = input;
+			const userId = ctx.session.user.id;
+
+			if (userId === friendId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "You cannot send a friend request to yourself.",
+				});
+			}
+
+			const [targetUser] = await db
+				.select({ id: user.id })
+				.from(user)
+				.where(eq(user.id, friendId));
+
+			if (!targetUser) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "User not found.",
+				});
+			}
+
+			const [existingFriendship] = await db
+				.select()
+				.from(friendship)
+				.where(
+					or(
+						and(
+							eq(friendship.userId, userId),
+							eq(friendship.friendId, friendId),
+						),
+						and(
+							eq(friendship.userId, friendId),
+							eq(friendship.friendId, userId),
+						),
+					),
+				)
+				.limit(1);
+
+			if (existingFriendship) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message:
+						"Friendship request already exists or users are already friends.",
+				});
+			}
+
+			const [newFriendship] = await db
+				.insert(friendship)
+				.values({
+					userId: userId,
+					friendId: friendId,
+					status: "pending",
+				})
+				.returning();
+
+			return {
+				success: true,
+				message: "Friend request sent successfully.",
+				friendship: newFriendship,
+			};
+		}),
+
+	getFriendRequests: protectedProcedure.query(async ({ ctx }) => {
+		const userId = ctx.session.user.id;
+
+		const friendRequests = await db
+			.select({
+				id: friendship.userId,
+				userId: friendship.userId,
+				friendId: friendship.friendId,
+				status: friendship.status,
+				createdAt: friendship.createdAt,
+				senderUsername: user.username,
+			})
+			.from(friendship)
+			.innerJoin(user, eq(user.id, friendship.userId))
+			.where(eq(friendship.friendId, userId));
+
+		return {
+			success: true,
+			friendRequests: friendRequests,
+		};
+	}),
+
+	acceptFriendRequest: protectedProcedure
+		.input(acceptFriendRequestSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { friendshipUserId } = input;
+			const userId = ctx.session.user.id;
+
+			const [existingFriendship] = await db
+				.select()
+				.from(friendship)
+				.where(
+					and(
+						eq(friendship.userId, friendshipUserId),
+						eq(friendship.friendId, userId),
+						eq(friendship.status, "pending"),
+					),
+				)
+				.limit(1);
+
+			if (!existingFriendship) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Friend request not found or already processed.",
+				});
+			}
+
+			const [updatedFriendship] = await db
+				.update(friendship)
+				.set({ status: "accepted" })
+				.where(
+					and(
+						eq(friendship.userId, friendshipUserId),
+						eq(friendship.friendId, userId),
+					),
+				)
+				.returning();
+
+			return {
+				success: true,
+				message: "Friend request accepted successfully.",
+				friendship: updatedFriendship,
+			};
+		}),
+
+	declineFriendRequest: protectedProcedure
+		.input(declineFriendRequestSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { friendshipUserId } = input;
+			const userId = ctx.session.user.id;
+
+			const [existingFriendship] = await db
+				.select()
+				.from(friendship)
+				.where(
+					and(
+						eq(friendship.userId, friendshipUserId),
+						eq(friendship.friendId, userId),
+						eq(friendship.status, "pending"),
+					),
+				)
+				.limit(1);
+
+			if (!existingFriendship) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Friend request not found or already processed.",
+				});
+			}
+
+			await db
+				.delete(friendship)
+				.where(
+					and(
+						eq(friendship.userId, friendshipUserId),
+						eq(friendship.friendId, userId),
+					),
+				);
+
+			return {
+				success: true,
+				message: "Friend request declined successfully.",
+			};
+		}),
+
+	getFriends: protectedProcedure.query(async ({ ctx }) => {
+		const userId = ctx.session.user.id;
+
+		const friendships = await db
+			.select({
+				friendId: friendship.friendId,
+				userId: friendship.userId,
+				status: friendship.status,
+				friendUsername: user.username,
+				friendImage: user.image,
+			})
+			.from(friendship)
+			.innerJoin(
+				user,
+				or(
+					and(eq(friendship.userId, userId), eq(user.id, friendship.friendId)),
+					and(eq(friendship.friendId, userId), eq(user.id, friendship.userId)),
+				),
+			)
+			.where(
+				or(
+					and(eq(friendship.userId, userId), eq(friendship.status, "accepted")),
+					and(
+						eq(friendship.friendId, userId),
+						eq(friendship.status, "accepted"),
+					),
+				),
+			);
+
+		return await Promise.all(
+			friendships.map(async (f) => {
+				const friendUserId = f.userId === userId ? f.friendId : f.userId;
+
+				const activeRoom = await getUserActiveRoom(friendUserId);
+				let roomInfo = null;
+
+				if (activeRoom) {
+					const [roomDetails] = await db
+						.select({
+							joinCode: room.joinCode,
+							isActive: room.isActive,
+						})
+						.from(room)
+						.where(eq(room.id, activeRoom.roomId))
+						.limit(1);
+
+					if (roomDetails?.isActive) {
+						roomInfo = {
+							joinCode: roomDetails.joinCode,
+						};
+					}
+				}
+
+				return {
+					id: friendUserId,
+					username: f.friendUsername,
+					image: f.friendImage,
+					activeRoom: roomInfo,
+				};
+			}),
+		);
+	}),
+
+	removeFriend: protectedProcedure
+		.input(removeFriendSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { friendId } = input;
+			const userId = ctx.session.user.id;
+
+			if (userId === friendId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "You cannot remove yourself as a friend.",
+				});
+			}
+
+			const [existingFriendship] = await db
+				.select()
+				.from(friendship)
+				.where(
+					and(
+						eq(friendship.status, "accepted"),
+						or(
+							and(
+								eq(friendship.userId, userId),
+								eq(friendship.friendId, friendId),
+							),
+							and(
+								eq(friendship.userId, friendId),
+								eq(friendship.friendId, userId),
+							),
+						),
+					),
+				)
+				.limit(1);
+
+			if (!existingFriendship) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Friendship not found.",
+				});
+			}
+
+			await db
+				.delete(friendship)
+				.where(
+					or(
+						and(
+							eq(friendship.userId, userId),
+							eq(friendship.friendId, friendId),
+						),
+						and(
+							eq(friendship.userId, friendId),
+							eq(friendship.friendId, userId),
+						),
+					),
+				);
+
+			return {
+				success: true,
+				message: "Friend removed successfully.",
 			};
 		}),
 });

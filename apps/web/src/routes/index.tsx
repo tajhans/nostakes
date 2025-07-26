@@ -1,8 +1,8 @@
 import CreateRoomForm from "@/components/create-room-form";
+import { DiscoverableRoomsTable } from "@/components/discoverable-rooms-table";
 import { IndexSkeleton } from "@/components/index-skeleton";
 import JoinRoomForm from "@/components/join-room-form";
 import Loader from "@/components/loader";
-import { PublicRoomsTable } from "@/components/public-rooms-table";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
@@ -42,10 +42,11 @@ function HomeComponent() {
 		enabled: !!session,
 	});
 
-	const { data: publicRooms, isLoading: isPublicRoomsLoading } = useQuery({
-		...trpc.getPublicRooms.queryOptions(),
-		enabled: !!session,
-	});
+	const { data: discoverableRooms, isLoading: isDiscoverableRoomsLoading } =
+		useQuery({
+			...trpc.getDiscoverableRooms.queryOptions(),
+			enabled: !!session,
+		});
 
 	if (isSessionPending) {
 		return <IndexSkeleton />;
@@ -120,12 +121,12 @@ function HomeComponent() {
 					</div>
 
 					<div className="space-y-4">
-						{isPublicRoomsLoading ? (
+						{isDiscoverableRoomsLoading ? (
 							<div className="flex justify-center py-8">
 								<Loader />
 							</div>
 						) : (
-							<PublicRoomsTable rooms={publicRooms || []} />
+							<DiscoverableRoomsTable rooms={discoverableRooms || []} />
 						)}
 					</div>
 				</div>

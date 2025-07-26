@@ -92,7 +92,7 @@ function RootComponent() {
 				<div className="flex min-h-svh flex-col">
 					<VerificationNotice />
 					<Header />
-					<main className="flex-grow">
+					<main className="flex-grow pb-20">
 						{isFetching ? <Loader /> : <Outlet />}
 					</main>
 					<Footer />

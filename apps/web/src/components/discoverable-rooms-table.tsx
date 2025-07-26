@@ -1,3 +1,24 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import type { RoomData } from "@/types";
 import {
 	flexRender,
 	getCoreRowModel,
@@ -19,20 +40,6 @@ import type {
 import { ChevronDownIcon, ChevronUpIcon, Users } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
-import { cn } from "@/lib/utils";
-import type { RoomData } from "@/types";
-
 const columns: ColumnDef<RoomData>[] = [
 	{
 		header: "Join Code",
@@ -44,6 +51,24 @@ const columns: ColumnDef<RoomData>[] = [
 					{code ? `${code.substring(0, 4)}-${code.substring(4, 8)}` : "N/A"}
 				</div>
 			);
+		},
+	},
+	{
+		header: "Visibility",
+		accessorKey: "public",
+		cell: ({ row }) => {
+			const isPublic = row.getValue("public") as boolean;
+			return isPublic ? (
+				<Badge variant="secondary">Public</Badge>
+			) : (
+				<Badge variant="outline">Friend's Room</Badge>
+			);
+		},
+		meta: {
+			filterVariant: "select",
+		},
+		filterFn: (row, id, value) => {
+			return value === "" || String(row.getValue(id)) === value;
 		},
 	},
 	{
@@ -123,11 +148,11 @@ const columns: ColumnDef<RoomData>[] = [
 	},
 ];
 
-interface PublicRoomsTableProps {
+interface DiscoverableRoomsTableProps {
 	rooms: RoomData[];
 }
 
-export function PublicRoomsTable({ rooms }: PublicRoomsTableProps) {
+export function DiscoverableRoomsTable({ rooms }: DiscoverableRoomsTableProps) {
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
 	const [sorting, setSorting] = useState<SortingState>([
 		{
@@ -162,12 +187,17 @@ export function PublicRoomsTable({ rooms }: PublicRoomsTableProps) {
 	});
 
 	return (
-		<div className="mx-auto max-w-3xl space-y-6 rounded-lg border p-6">
-			<h2 className="text-center font-bold text-xl">Public Rooms</h2>
+		<div className="mx-auto max-w-4xl space-y-6 rounded-lg border p-6">
+			<h2 className="text-center font-bold text-xl">Discover Rooms</h2>
 
 			{/* Filters */}
-			<div className="grid grid-cols-6 gap-2">
+			<div className="grid grid-cols-7 gap-2">
 				<div /> {/* Empty space for Join Code column */}
+				<div className="w-28">
+					{table.getColumn("public") && (
+						<Filter column={table.getColumn("public")} />
+					)}
+				</div>
 				<div className="w-28">
 					{table.getColumn("maxPlayers") && (
 						<Filter column={table.getColumn("maxPlayers")} />
@@ -280,7 +310,7 @@ export function PublicRoomsTable({ rooms }: PublicRoomsTableProps) {
 								colSpan={columns.length}
 								className="h-24 text-center text-muted-foreground"
 							>
-								No active public rooms.
+								No discoverable rooms found.
 							</TableCell>
 						</TableRow>
 					)}
@@ -291,7 +321,7 @@ export function PublicRoomsTable({ rooms }: PublicRoomsTableProps) {
 			<div className="flex flex-col items-center justify-center space-y-2">
 				<div className="flex w-[100px] items-center justify-center font-medium text-muted-foreground text-sm">
 					Page {table.getState().pagination.pageIndex + 1} of{" "}
-					{table.getPageCount() + 1}
+					{table.getPageCount() || 1}
 				</div>
 				<div className="flex items-center space-x-2">
 					<Button
@@ -322,6 +352,30 @@ function Filter({ column }: { column: Column<RoomData, unknown> | undefined }) {
 	const columnFilterValue = column.getFilterValue();
 	const columnHeader =
 		typeof column.columnDef.header === "string" ? column.columnDef.header : "";
+	const filterVariant = column.columnDef.meta?.filterVariant;
+
+	if (filterVariant === "select") {
+		return (
+			<div className="*:not-first:mt-2">
+				<Label>{columnHeader}</Label>
+				<Select
+					value={columnFilterValue as string}
+					onValueChange={(value) =>
+						column.setFilterValue(value === "all" ? "" : value)
+					}
+				>
+					<SelectTrigger>
+						<SelectValue placeholder="All" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="all">All</SelectItem>
+						<SelectItem value="true">Public</SelectItem>
+						<SelectItem value="false">Private</SelectItem>
+					</SelectContent>
+				</Select>
+			</div>
+		);
+	}
 
 	return (
 		<div className="*:not-first:mt-2">
