@@ -1,3 +1,4 @@
+import { CopyCode } from "@/components/copy-code";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,10 +47,10 @@ const columns: ColumnDef<RoomData>[] = [
 		accessorKey: "joinCode",
 		cell: ({ row }) => {
 			const code = row.getValue("joinCode") as string;
-			return (
-				<div className="font-mono text-sm tracking-wider">
-					{code ? `${code.substring(0, 4)}-${code.substring(4, 8)}` : "N/A"}
-				</div>
+			return code ? (
+				<CopyCode joinCode={code} />
+			) : (
+				<span className="text-muted-foreground">N/A</span>
 			);
 		},
 	},
@@ -137,7 +138,7 @@ const columns: ColumnDef<RoomData>[] = [
 		accessorKey: "ante",
 		cell: ({ row }) => {
 			const ante = Number.parseInt(row.getValue("ante"));
-			return new Intl.NumberFormat("en-US", {
+			return new Intl.Numberormat("en-US", {
 				notation: "compact",
 				maximumFractionDigits: 1,
 			}).format(ante);

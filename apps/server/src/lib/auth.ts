@@ -10,7 +10,7 @@ import {
 	sendResetPassword,
 	sendVerificationEmail,
 } from "./email";
-import { getUserImageBase64 } from "./utils";
+import { getUserSessionData } from "./utils";
 
 const options = {
 	database: drizzleAdapter(db, {
@@ -39,13 +39,17 @@ const options = {
 		deleteUser: {
 			enabled: true,
 			sendDeleteAccountVerification: async ({ user, url }) => {
-				sendDeleteAccountVerification({ email: user.email, url });
+				await sendDeleteAccountVerification({ email: user.email, url });
 			},
 		},
 		changeEmail: {
 			enabled: true,
 			sendChangeEmailVerification: async ({ user, newEmail, url }) => {
-				sendChangeEmailVerification({ oldEmail: user.email, newEmail, url });
+				await sendChangeEmailVerification({
+					oldEmail: user.email,
+					newEmail,
+					url,
+				});
 			},
 		},
 	},
@@ -63,12 +67,13 @@ export const auth = betterAuth({
 	plugins: [
 		...(options.plugins ?? []),
 		customSession(async ({ user, session }) => {
-			const imageBase64 = await getUserImageBase64(session.userId);
+			const userData = await getUserSessionData(session.userId);
 
 			return {
 				user: {
 					...user,
-					imageBase64,
+					imageBase64: userData.imageBase64,
+					friendCode: userData.friendCode,
 				},
 				session,
 			};

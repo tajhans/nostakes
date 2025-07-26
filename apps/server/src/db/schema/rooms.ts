@@ -5,11 +5,9 @@ import {
 	text,
 	timestamp,
 } from "drizzle-orm/pg-core";
-import { customAlphabet, nanoid } from "nanoid";
+import { nanoid } from "nanoid";
+import { generateCode } from "../../lib/utils";
 import { user } from "./auth";
-
-const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
-const generateJoinCode = () => customAlphabet(alphabet, 8)();
 
 export const room = pgTable("room", {
 	id: text("id")
@@ -18,7 +16,7 @@ export const room = pgTable("room", {
 	joinCode: text("join_code")
 		.notNull()
 		.unique()
-		.$defaultFn(() => generateJoinCode()),
+		.$defaultFn(() => generateCode()),
 	createdAt: timestamp("created_at")
 		.notNull()
 		.$defaultFn(() => new Date()),

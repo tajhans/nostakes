@@ -1,3 +1,4 @@
+import { CopyCode } from "@/components/copy-code";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -15,9 +16,8 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { UpdateMaxPlayersDialog } from "@/components/update-max-players-dialog";
-import { Check, Circle, CircleDot, Copy, Pencil } from "lucide-react";
+import { Circle, CircleDot, Pencil } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 
 import type { RoomData, RoomMemberInfo } from "@/types";
 
@@ -53,7 +53,6 @@ export function RoomInfoBar({
 	currentUserMemberInfo,
 }: RoomInfoBarProps) {
 	const [maxPlayersDialogOpen, setMaxPlayersDialogOpen] = useState(false);
-	const [isCopied, setIsCopied] = useState(false);
 	const [isCloseRoomDialogOpen, setIsCloseRoomDialogOpen] = useState(false);
 	const [isLeaveRoomDialogOpen, setIsLeaveRoomDialogOpen] = useState(false);
 
@@ -64,76 +63,11 @@ export function RoomInfoBar({
 	const leaveRoomDisabled =
 		leaveRoom.isPending || !isConnected || isHandInProgress;
 
-	const handleCopyCode = async () => {
-		if (!room.joinCode) return;
-		const codeToCopy = room.joinCode;
-
-		try {
-			await navigator.clipboard.writeText(codeToCopy);
-			setIsCopied(true);
-			toast.success("Room code copied to clipboard!");
-			setTimeout(() => setIsCopied(false), 2000);
-		} catch (err) {
-			console.error(
-				"Failed to copy room code using navigator.clipboard: ",
-				err,
-			);
-			const textArea = document.createElement("textarea");
-			textArea.value = codeToCopy;
-			textArea.style.position = "fixed";
-			textArea.style.opacity = "0";
-			document.body.appendChild(textArea);
-			textArea.focus();
-			textArea.select();
-			try {
-				const successful = document.execCommand("copy");
-				if (successful) {
-					setIsCopied(true);
-					toast.success("Room code copied to clipboard! (fallback)");
-					setTimeout(() => setIsCopied(false), 2000);
-				} else {
-					throw new Error("Fallback copy command failed");
-				}
-			} catch (fallbackErr) {
-				console.error("Fallback copy failed: ", fallbackErr);
-				toast.error("Failed to copy room code.");
-			} finally {
-				document.body.removeChild(textArea);
-			}
-		}
-	};
-
 	return (
 		<div className="mb-4 flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
 			<div className="flex items-center gap-2">
 				<span className="font-medium text-sm">Code:</span>
-				<div className="flex items-center rounded-md border bg-secondary px-2 py-1">
-					<span className="font-mono text-sm tracking-wider">
-						{room.joinCode
-							? `${room.joinCode.substring(0, 4)}-${room.joinCode.substring(4, 8)}`
-							: "N/A"}
-					</span>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								variant="ghost"
-								size="icon"
-								className="ml-1 h-6 w-6"
-								onClick={handleCopyCode}
-								disabled={!room.joinCode || isCopied}
-							>
-								{isCopied ? (
-									<Check className="h-4 w-4 text-green-500" />
-								) : (
-									<Copy className="h-4 w-4" />
-								)}
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent>
-							<p>Copy Join Code</p>
-						</TooltipContent>
-					</Tooltip>
-				</div>
+				<CopyCode joinCode={room.joinCode || ""} />
 				<Tooltip>
 					<TooltipTrigger>
 						{isConnected ? (

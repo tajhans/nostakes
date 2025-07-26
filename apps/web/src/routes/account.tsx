@@ -1,4 +1,5 @@
 import { AccountSkeleton } from "@/components/account-skeleton";
+import { CopyCode } from "@/components/copy-code";
 import { ImageUpload } from "@/components/image-upload";
 import { Button } from "@/components/ui/button";
 import {
@@ -113,6 +114,20 @@ function RouteComponent() {
 		},
 	});
 
+	const addFriendByCode = useMutation({
+		mutationFn: async (friendCode: string) => {
+			return trpcClient.addFriendByCode.mutate({ friendCode });
+		},
+		onSuccess: () => {
+			toast.success("Friend added successfully!");
+			friends.refetch();
+			friendCodeForm.reset();
+		},
+		onError: (error) => {
+			toast.error(`Failed to add friend: ${error.message}`);
+		},
+	});
+
 	const handleDeleteAccount = async () => {
 		if (!session?.user?.email) {
 			toast.error("Cannot delete account: Email not found.");
@@ -178,6 +193,20 @@ function RouteComponent() {
 		validators: {
 			onSubmit: z.object({
 				newEmail: z.string().email("Please enter a valid email address."),
+			}),
+		},
+	});
+
+	const friendCodeForm = useForm({
+		defaultValues: {
+			friendCode: "",
+		},
+		onSubmit: async ({ value }) => {
+			await addFriendByCode.mutateAsync(value.friendCode);
+		},
+		validators: {
+			onSubmit: z.object({
+				friendCode: z.string().min(1, "Friend code is required"),
 			}),
 		},
 	});
@@ -294,6 +323,66 @@ function RouteComponent() {
 								</Button>
 							)}
 						</emailForm.Subscribe>
+					</form>
+				</div>
+
+				<Separator />
+
+				<div className="space-y-4">
+					<h2 className="font-medium text-lg">Your Friend Code</h2>
+					<p className="text-muted-foreground text-sm">
+						Share this code with others to instantly become friends.
+					</p>
+					<div className="flex items-center gap-2">
+						<CopyCode
+							joinCode={session.user.friendCode || ""}
+							className="flex items-center gap-2"
+						/>
+					</div>
+				</div>
+
+				<div className="space-y-4">
+					<h2 className="font-medium text-lg">Add Friend by Code</h2>
+					<form
+						onSubmit={(e) => {
+							e.preventDefault();
+							e.stopPropagation();
+							void friendCodeForm.handleSubmit();
+						}}
+						className="flex flex-col items-start gap-4 sm:flex-row sm:items-end"
+					>
+						<friendCodeForm.Field name="friendCode">
+							{(field) => (
+								<div className="w-full space-y-2 sm:w-auto sm:flex-1">
+									<Label htmlFor={field.name}>Friend Code</Label>
+									<Input
+										id={field.name}
+										name={field.name}
+										type="text"
+										value={field.state.value}
+										onBlur={field.handleBlur}
+										onChange={(e) => field.handleChange(e.target.value)}
+										placeholder="Enter friend code"
+									/>
+									{field.state.meta.errors?.length > 0 ? (
+										<p className="text-red-500 text-sm">
+											{String(field.state.meta.errors[0])}
+										</p>
+									) : null}
+								</div>
+							)}
+						</friendCodeForm.Field>
+						<friendCodeForm.Subscribe>
+							{(state) => (
+								<Button
+									type="submit"
+									disabled={!state.canSubmit || state.isSubmitting}
+									className="w-full sm:w-auto"
+								>
+									{state.isSubmitting ? "Adding..." : "Add Friend"}
+								</Button>
+							)}
+						</friendCodeForm.Subscribe>
 					</form>
 				</div>
 
@@ -445,7 +534,7 @@ function RouteComponent() {
 													<div className="flex items-center gap-2">
 														<span className="inline-flex h-2 w-2 rounded-full bg-green-500" />
 														<p className="text-muted-foreground text-xs">
-															In room: {friend.activeRoom.joinCode}
+															In room
 														</p>
 													</div>
 												) : (
@@ -460,18 +549,10 @@ function RouteComponent() {
 										</div>
 										<div className="flex gap-2">
 											{friend.activeRoom && (
-												<Button
-													size="sm"
-													variant="secondary"
-													onClick={() => {
-														navigator.clipboard.writeText(
-															friend.activeRoom?.joinCode || "",
-														);
-														toast.success("Join code copied to clipboard!");
-													}}
-												>
-													Copy Code
-												</Button>
+												<CopyCode
+													joinCode={friend.activeRoom.joinCode}
+													className="flex items-center gap-2"
+												/>
 											)}
 											<Button
 												size="sm"

@@ -106,6 +106,10 @@ const removeFriendSchema = z.object({
 	friendId: z.string().min(1, "Friend ID is required"),
 });
 
+const addFriendByCodeSchema = z.object({
+	friendCode: z.string().min(1, "Friend code is required"),
+});
+
 async function getUserActiveRoom(userId: string) {
 	const [activeRoom] = await db
 		.select({
@@ -1430,6 +1434,71 @@ export const appRouter = router({
 			return {
 				success: true,
 				message: "Friend removed successfully.",
+			};
+		}),
+
+	addFriendByCode: protectedProcedure
+		.input(addFriendByCodeSchema)
+		.mutation(async ({ input, ctx }) => {
+			const { friendCode } = input;
+			const userId = ctx.session.user.id;
+
+			const [targetUser] = await db
+				.select({ id: user.id })
+				.from(user)
+				.where(eq(user.friendCode, friendCode));
+
+			if (!targetUser) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "User with that friend code not found.",
+				});
+			}
+
+			if (userId === targetUser.id) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "You cannot add yourself as a friend.",
+				});
+			}
+
+			const [existingFriendship] = await db
+				.select()
+				.from(friendship)
+				.where(
+					or(
+						and(
+							eq(friendship.userId, userId),
+							eq(friendship.friendId, targetUser.id),
+						),
+						and(
+							eq(friendship.userId, targetUser.id),
+							eq(friendship.friendId, userId),
+						),
+					),
+				)
+				.limit(1);
+
+			if (existingFriendship) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "You are already friends with this user.",
+				});
+			}
+
+			const [newFriendship] = await db
+				.insert(friendship)
+				.values({
+					userId: userId,
+					friendId: targetUser.id,
+					status: "accepted",
+				})
+				.returning();
+
+			return {
+				success: true,
+				message: "Friend added successfully!",
+				friendship: newFriendship,
 			};
 		}),
 });

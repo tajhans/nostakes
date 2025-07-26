@@ -1,4 +1,5 @@
 import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { generateCode } from "../../lib/utils";
 
 export const user = pgTable("user", {
 	id: text("id").primaryKey(),
@@ -11,6 +12,9 @@ export const user = pgTable("user", {
 	updatedAt: timestamp("updated_at").notNull(),
 	username: text("username").unique(),
 	displayUsername: text("display_username"),
+	friendCode: text("friend_code")
+		.unique()
+		.$default(() => generateCode()),
 });
 
 export const session = pgTable("session", {
