@@ -62,7 +62,7 @@ const columns: ColumnDef<RoomData>[] = [
 			return isPublic ? (
 				<Badge variant="secondary">Public</Badge>
 			) : (
-				<Badge variant="outline">Friend's Room</Badge>
+				<Badge variant="outline">Private</Badge>
 			);
 		},
 		meta: {
@@ -138,7 +138,7 @@ const columns: ColumnDef<RoomData>[] = [
 		accessorKey: "ante",
 		cell: ({ row }) => {
 			const ante = Number.parseInt(row.getValue("ante"));
-			return new Intl.Numberormat("en-US", {
+			return new Intl.NumberFormat("en-US", {
 				notation: "compact",
 				maximumFractionDigits: 1,
 			}).format(ante);
@@ -157,7 +157,7 @@ export function DiscoverableRoomsTable({ rooms }: DiscoverableRoomsTableProps) {
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
 	const [sorting, setSorting] = useState<SortingState>([
 		{
-			id: "isActive",
+			id: "maxPlayers",
 			desc: true,
 		},
 	]);
