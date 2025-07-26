@@ -629,7 +629,7 @@ function RouteComponent() {
 					currentUserMemberInfo={currentUserMemberInfo}
 				/>
 
-				<div className="grid gap-4 lg:grid-cols-[1fr_400px]">
+				<div className="grid h-[45vh] max-h-[45vh] gap-4 lg:grid-cols-[1fr_400px]">
 					<div className="space-y-4">
 						<div className="rounded-lg border p-4">
 							<div className="mb-2 flex items-center justify-between">
@@ -1094,21 +1094,23 @@ function RouteComponent() {
 							</div>
 						</div>
 					</div>
-					<RoomChat
-						messages={chatMessages}
-						sendMessage={sendChatMessage}
-						isConnected={isConnected}
-						currentUserId={session.user.id}
-						filterProfanity={room.filterProfanity}
-						isAdmin={isAdmin}
-						onToggleFilter={
-							isAdmin
-								? (enabled) =>
-										updateFilter.mutate({ roomId, filterProfanity: enabled })
-								: undefined
-						}
-						isUpdatingFilter={updateFilter.isPending}
-					/>
+					<div className="min-h-0">
+						<RoomChat
+							messages={chatMessages}
+							sendMessage={sendChatMessage}
+							isConnected={isConnected}
+							currentUserId={session.user.id}
+							filterProfanity={room.filterProfanity}
+							isAdmin={isAdmin}
+							onToggleFilter={
+								isAdmin
+									? (enabled) =>
+											updateFilter.mutate({ roomId, filterProfanity: enabled })
+									: undefined
+							}
+							isUpdatingFilter={updateFilter.isPending}
+						/>
+					</div>
 				</div>
 			</div>
 		</TooltipProvider>

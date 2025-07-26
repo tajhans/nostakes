@@ -47,22 +47,20 @@ export function RoomChat({
 	isUpdatingFilter = false,
 }: RoomChatProps) {
 	const [messageInput, setMessageInput] = useState("");
-	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const filter = useRef(new Filter());
 	const lastMessageTime = useRef<number>(0);
+	const scrollAreaRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		if (scrollAreaRef.current) {
-			const scrollElement = scrollAreaRef.current.querySelector(
+			const scrollContainer = scrollAreaRef.current.querySelector(
 				"[data-radix-scroll-area-viewport]",
 			);
-			if (scrollElement) {
-				scrollElement.scrollTop = scrollElement.scrollHeight;
-			} else {
-				scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+			if (scrollContainer) {
+				scrollContainer.scrollTop = scrollContainer.scrollHeight;
 			}
 		}
-	}, []);
+	}, [messages]);
 
 	const handleSend = async () => {
 		const trimmedMessage = messageInput.trim();
@@ -104,7 +102,7 @@ export function RoomChat({
 	);
 
 	return (
-		<div className="flex h-full flex-col overflow-hidden rounded-lg border p-4">
+		<div className="flex h-full max-h-full flex-col overflow-hidden rounded-lg border p-4">
 			<div className="mb-2 flex items-center gap-2">
 				<h2 className="font-medium">Chat</h2>
 				<TooltipProvider>
@@ -139,7 +137,7 @@ export function RoomChat({
 					</div>
 				)}
 			</div>
-			<ScrollArea ref={scrollAreaRef} className="h-0 flex-grow" type="always">
+			<ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1" type="always">
 				<div className="space-y-1 pr-4 pb-4">
 					{groupedMessages.map((msg) => (
 						<div
@@ -156,13 +154,18 @@ export function RoomChat({
 								</span>
 							)}
 							<div
-								className={`max-w-[80%] rounded-lg px-3 py-2 ${
+								className={`rounded-lg px-3 py-2 ${
 									msg.isCurrentUser
 										? "bg-primary text-primary-foreground"
 										: "bg-muted"
 								}`}
+								style={{
+									maxWidth: "80%",
+									wordBreak: "break-all",
+									overflowWrap: "anywhere",
+								}}
 							>
-								<p className="text-sm">{msg.message}</p>
+								<p className="whitespace-pre-wrap text-sm">{msg.message}</p>
 							</div>
 						</div>
 					))}
